@@ -102,6 +102,7 @@ export type InteractableId =
   | 'drive_table'
   | 'mina_desk'
   | 'antigravity_desk'
+  | 'ai_studio_desk'
   | 'dining_table'
   | DiningChairSeatId;
 
@@ -115,6 +116,40 @@ export interface AntigravityMessage {
   createdAt: number;
   inspectedFiles?: string[];
 }
+
+export type AiStudioMode = 'prompt' | 'build' | 'schema';
+
+export type AiStudioModelId = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
+
+export type AiStudioThinkingLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export interface AiStudioMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  mode: AiStudioMode;
+  model?: AiStudioModelId;
+  createdAt: number;
+}
+
+export type CharacterId = 'mina' | 'antigravity' | 'ai_studio';
+
+export type CharacterAvailabilityStatus = 'ready' | 'busy' | 'unavailable';
+
+export interface CharacterStatusSnapshot {
+  id: CharacterId;
+  name: string;
+  status: CharacterAvailabilityStatus;
+  tokensRemaining: number;
+  tokensUsed: number;
+  tokensLimit: number;
+  resetAt: number;
+  currentTask: string | null;
+  unavailableReason: string | null;
+  unavailableCode?: string | null;
+}
+
+export type CharacterStatusMap = Record<CharacterId, CharacterStatusSnapshot>;
 
 export interface GoogleDriveFile {
   id: string;

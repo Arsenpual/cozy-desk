@@ -15,7 +15,11 @@ const __dirname = path.dirname(__filename);
 
 type WorkMode = 'qa' | 'brainstorm' | 'draft';
 type AntigravityMode = 'code' | 'workspace' | 'arch';
+type AiStudioMode = 'prompt' | 'build' | 'schema';
+type AiStudioModelId = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
+type AiStudioThinkingLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 type TimeOfDay = 'morning' | 'afternoon' | 'evening';
+type CharacterId = 'mina' | 'antigravity' | 'ai_studio';
 
 interface IncomingMessage {
   role: 'user' | 'assistant';
@@ -33,6 +37,249 @@ interface AntigravityChatRequestBody {
   messages?: IncomingMessage[];
   mode?: AntigravityMode;
   focusFiles?: string[];
+}
+
+interface AiStudioChatRequestBody {
+  messages?: IncomingMessage[];
+  mode?: AiStudioMode;
+  model?: AiStudioModelId;
+  thinkingLevel?: AiStudioThinkingLevel;
+  systemInstruction?: string;
+}
+
+interface QuotaConfigRequestBody {
+  dailyLimit?: number;
+  resetUsage?: boolean;
+}
+
+interface CharacterRuntimeState {
+  id: CharacterId;
+  name: string;
+  activeRequests: number;
+  currentTask: string | null;
+  lastErrorReason: string | null;
+  lastErrorCode: string | null;
+  lastErrorUntil: number;
+}
+
+function getNextMidnightMs(fromMs = Date.now()): number {
+  const next = new Date(fromMs);
+  next.setHours(24, 0, 0, 0);
+  return next.getTime();
+}
+
+const DEFAULT_DAILY_TOKEN_LIMIT = 250_000;
+
+const quotaState = {
+  tokensLimit: DEFAULT_DAILY_TOKEN_LIMIT,
+  tokensUsed: 0,
+  resetAt: getNextMidnightMs(),
+};
+
+const characterRuntime: Record<CharacterId, CharacterRuntimeState> = {
+  mina: {
+    id: 'mina',
+    name: 'มีน่า',
+    activeRequests: 0,
+    currentTask: null,
+    lastErrorReason: null,
+    lastErrorCode: null,
+    lastErrorUntil: 0,
+  },
+  antigravity: {
+    id: 'antigravity',
+    name: 'Antigravity',
+    activeRequests: 0,
+    currentTask: null,
+    lastErrorReason: null,
+    lastErrorCode: null,
+    lastErrorUntil: 0,
+  },
+  ai_studio: {
+    id: 'ai_studio',
+    name: 'Google AI Studio',
+    activeRequests: 0,
+    currentTask: null,
+    lastErrorReason: null,
+    lastErrorCode: null,
+    lastErrorUntil: 0,
+  },
+};
+
+function ensureQuotaWindowFresh(): void {
+  const now = Date.now();
+  if (now >= quotaState.resetAt) {
+    quotaState.tokensUsed = 0;
+    quotaState.resetAt = getNextMidnightMs(now);
+    for (const c of Object.values(characterRuntime)) {
+      if (c.lastErrorCode === 'RESOURCE_EXHAUSTED' || c.lastErrorCode === 'QUOTA_EXHAUSTED') {
+        c.lastErrorReason = null;
+        c.lastErrorCode = null;
+        c.lastErrorUntil = 0;
+      }
+    }
+  }
+}
+
+function hasValidGeminiApiKey(): boolean {
+  const key = process.env.GEMINI_API_KEY?.trim();
+  return Boolean(key && key !== 'MY_GEMINI_API_KEY');
+}
+
+function summarizeTaskLabel(raw: string, fallback: string): string {
+  const cleaned = raw.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return fallback;
+  return cleaned.length > 38 ? `${cleaned.slice(0, 38)}…` : cleaned;
+}
+
+function beginCharacterTask(id: CharacterId, taskLabel: string): void {
+  ensureQuotaWindowFresh();
+  const c = characterRuntime[id];
+  c.activeRequests += 1;
+  c.currentTask = taskLabel;
+  c.lastErrorReason = null;
+  c.lastErrorCode = null;
+  c.lastErrorUntil = 0;
+}
+
+function endCharacterTask(id: CharacterId): void {
+  const c = characterRuntime[id];
+  c.activeRequests = Math.max(0, c.activeRequests - 1);
+  if (c.activeRequests === 0) {
+    c.currentTask = null;
+  }
+}
+
+function recordCharacterError(id: CharacterId, code: string | undefined, reason: string): void {
+  const c = characterRuntime[id];
+  c.lastErrorCode = code ?? 'ERROR';
+  c.lastErrorReason = reason;
+  // Keep transient errors visible for 2 minutes; persistent auth errors stay until resolved/retried
+  const durationMs =
+    code === 'API_KEY_INVALID' || code === 'PERMISSION_DENIED'
+      ? 30 * 60 * 1000
+      : code === 'RESOURCE_EXHAUSTED'
+        ? 5 * 60 * 1000
+        : 90 * 1000;
+  c.lastErrorUntil = Date.now() + durationMs;
+}
+
+function recordTokenUsage(tokens: number): void {
+  ensureQuotaWindowFresh();
+  if (Number.isFinite(tokens) && tokens > 0) {
+    quotaState.tokensUsed = Math.min(
+      quotaState.tokensLimit * 2,
+      quotaState.tokensUsed + Math.round(tokens)
+    );
+  }
+}
+
+function estimateFallbackTokens(inputChars: number, outputChars: number): number {
+  return Math.max(40, Math.round((inputChars + outputChars) / 3.2));
+}
+
+function formatShortClock(ms: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '00:00 น.';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} น.`;
+}
+
+function buildCharacterStatusMap() {
+  ensureQuotaWindowFresh();
+  const now = Date.now();
+  const apiKeyReady = hasValidGeminiApiKey();
+  const remaining = Math.max(0, quotaState.tokensLimit - quotaState.tokensUsed);
+
+  const result: Record<
+    CharacterId,
+    {
+      id: CharacterId;
+      name: string;
+      status: 'ready' | 'busy' | 'unavailable';
+      tokensRemaining: number;
+      tokensUsed: number;
+      tokensLimit: number;
+      resetAt: number;
+      currentTask: string | null;
+      unavailableReason: string | null;
+      unavailableCode: string | null;
+    }
+  > = {} as never;
+
+  for (const id of ['mina', 'antigravity', 'ai_studio'] as CharacterId[]) {
+    const c = characterRuntime[id];
+    const hasActiveError = Boolean(c.lastErrorReason && now < c.lastErrorUntil);
+
+    let status: 'ready' | 'busy' | 'unavailable' = 'ready';
+    let unavailableReason: string | null = null;
+    let unavailableCode: string | null = null;
+
+    if (!apiKeyReady) {
+      status = 'unavailable';
+      unavailableCode = 'MISSING_API_KEY';
+      unavailableReason = 'ยังไม่ได้ตั้งค่า GEMINI_API_KEY';
+    } else if (c.activeRequests > 0) {
+      status = 'busy';
+    } else if (remaining <= 0) {
+      status = 'unavailable';
+      unavailableCode = 'QUOTA_EXHAUSTED';
+      unavailableReason = `Token หมด (รีเซ็ต ${formatShortClock(quotaState.resetAt)})`;
+    } else if (hasActiveError) {
+      status = 'unavailable';
+      unavailableCode = c.lastErrorCode;
+      unavailableReason = c.lastErrorReason;
+    }
+
+    result[id] = {
+      id,
+      name: c.name,
+      status,
+      tokensRemaining: remaining,
+      tokensUsed: quotaState.tokensUsed,
+      tokensLimit: quotaState.tokensLimit,
+      resetAt: quotaState.resetAt,
+      currentTask: status === 'busy' ? c.currentTask : null,
+      unavailableReason,
+      unavailableCode,
+    };
+  }
+
+  return result;
+}
+
+function buildAiStudioSystemInstruction(
+  mode: AiStudioMode,
+  customInstruction?: string
+): string {
+  const modeGuidance: Record<AiStudioMode, string> = {
+    prompt: [
+      'โหมดปัจจุบัน: Prompt Lab (ออกแบบ ทดสอบ และปรับแต่ง Prompt)',
+      '- ช่วยวิเคราะห์โจทย์ เขียน/รีไรต์ Prompt ให้คมชัด แยกโครงสร้าง Role / Context / Constraints / Output Format',
+      '- แนะนำวิธีปรับจูนให้ผลลัพธ์แม่นยำและสม่ำเสมอขึ้น',
+    ].join('\n'),
+    build: [
+      'โหมดปัจจุบัน: App Builder (วางโครงสร้างและออกแบบต้นแบบเว็บแอพ)',
+      '- เสนอสถาปัตยกรรมคอมโพเนนต์ โฟลว์การใช้งาน UI และตัวอย่างโค้ด React + TypeScript + Tailwind CSS ที่พร้อมต่อยอด',
+      '- ชี้จุดควรระวังด้าน UX และ Edge Cases อย่างกระชับ',
+    ].join('\n'),
+    schema: [
+      'โหมดปัจจุบัน: JSON & Schema (ออกแบบ Structured Output / JSON Schema / TypeScript Interface)',
+      '- สร้าง JSON Schema หรือ TypeScript Type ที่สะอาด ถูกต้องตามมาตรฐาน พร้อมตัวอย่าง JSON ที่ใช้งานได้จริง',
+      '- อธิบายฟิลด์สำคัญสั้นๆ ในรูปแบบอ่านง่าย',
+    ].join('\n'),
+  };
+
+  return [
+    'คุณคือ "Google AI Studio" ตัวละครผู้เชี่ยวชาญด้าน Prompt Engineering, การสร้างต้นแบบแอพ และการออกแบบ Structured Schema ประจำสถานี AI Lab ในห้องทำงาน Cozy Desk',
+    'บุคลิกของคุณ: ทันสมัย เป็นระบบ ฉับไว เป็นมิตร และเน้นผลลัพธ์ที่นำไปใช้จริงได้ทันที',
+    'ภาษา: ตอบเป็นภาษาไทยอย่างเป็นธรรมชาติเป็นหลัก (ใช้ศัพท์เทคนิคและโค้ดภาษาอังกฤษตามมาตรฐาน)',
+    modeGuidance[mode] ?? modeGuidance.prompt,
+    customInstruction?.trim()
+      ? `คำสั่งเพิ่มเติมจากผู้ใช้ (System Instruction):\n${customInstruction.trim().slice(0, 2000)}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 const EXCLUDED_DIRS = new Set(['node_modules', '.git', 'dist', '.gemini']);
@@ -315,6 +562,193 @@ async function startServer() {
     });
   });
 
+  app.get('/api/characters/status', (_req, res) => {
+    res.json({
+      ok: true,
+      characters: buildCharacterStatusMap(),
+      updatedAt: Date.now(),
+    });
+  });
+
+  app.post('/api/characters/quota-config', (req, res) => {
+    ensureQuotaWindowFresh();
+    const body = (req.body ?? {}) as QuotaConfigRequestBody;
+    if (typeof body.dailyLimit === 'number' && Number.isFinite(body.dailyLimit)) {
+      quotaState.tokensLimit = Math.max(10_000, Math.min(10_000_000, Math.round(body.dailyLimit)));
+    }
+    if (body.resetUsage) {
+      quotaState.tokensUsed = 0;
+      quotaState.resetAt = getNextMidnightMs();
+      for (const c of Object.values(characterRuntime)) {
+        if (c.lastErrorCode === 'RESOURCE_EXHAUSTED' || c.lastErrorCode === 'QUOTA_EXHAUSTED') {
+          c.lastErrorReason = null;
+          c.lastErrorCode = null;
+          c.lastErrorUntil = 0;
+        }
+      }
+    }
+    res.json({
+      ok: true,
+      characters: buildCharacterStatusMap(),
+      updatedAt: Date.now(),
+    });
+  });
+
+  app.post('/api/aistudio/chat', async (req, res) => {
+    const body = (req.body ?? {}) as AiStudioChatRequestBody;
+    const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+    const mode: AiStudioMode =
+      body.mode === 'build' || body.mode === 'schema' ? body.mode : 'prompt';
+    const selectedModel: AiStudioModelId =
+      body.model === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
+    const thinkingLevelKey: AiStudioThinkingLevel =
+      body.thinkingLevel === 'LOW' || body.thinkingLevel === 'HIGH'
+        ? body.thinkingLevel
+        : 'MEDIUM';
+    const customSysInst =
+      typeof body.systemInstruction === 'string' ? body.systemInstruction : '';
+
+    const filtered = rawMessages
+      .filter(
+        (m): m is IncomingMessage =>
+          Boolean(m) &&
+          (m.role === 'user' || m.role === 'assistant') &&
+          typeof m.content === 'string' &&
+          m.content.trim().length > 0
+      )
+      .slice(-20);
+
+    const sanitizedMessages: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    for (const m of filtered) {
+      const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+      const text = m.content.trim().slice(0, 6000);
+      const prev = sanitizedMessages[sanitizedMessages.length - 1];
+      if (prev && prev.role === role) {
+        prev.parts[0].text = `${prev.parts[0].text}\n\n${text}`.slice(0, 8000);
+      } else {
+        sanitizedMessages.push({ role, parts: [{ text }] });
+      }
+    }
+
+    if (
+      sanitizedMessages.length === 0 ||
+      sanitizedMessages[sanitizedMessages.length - 1].role !== 'user'
+    ) {
+      res.status(400).json({ error: 'กรุณาพิมพ์ Prompt ก่อนส่งให้ Google AI Studio ครับ' });
+      return;
+    }
+
+    let geminiClient: GoogleGenAI;
+    try {
+      geminiClient = createGeminiClient();
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      recordCharacterError('ai_studio', classified.code, classified.message);
+      res.status(classified.status).json({ error: classified.message });
+      return;
+    }
+
+    const latestPrompt = sanitizedMessages[sanitizedMessages.length - 1].parts[0].text;
+    const taskFallback =
+      mode === 'build'
+        ? 'ออกแบบต้นแบบแอพ'
+        : mode === 'schema'
+          ? 'สร้าง JSON Schema'
+          : 'ทดลอง Prompt Lab';
+    beginCharacterTask('ai_studio', summarizeTaskLabel(latestPrompt, taskFallback));
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    res.write(': connected\n\n');
+
+    let clientDisconnected = false;
+    const clientAbort = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        clientAbort.abort();
+      }
+    });
+
+    const keepAliveTimer = setInterval(() => {
+      if (!clientDisconnected && !res.writableEnded) {
+        res.write(': keepalive\n\n');
+      }
+    }, 8000);
+
+    try {
+      const systemInstruction = buildAiStudioSystemInstruction(mode, customSysInst);
+      const thinkingEnum =
+        thinkingLevelKey === 'LOW'
+          ? ThinkingLevel.LOW
+          : thinkingLevelKey === 'HIGH'
+            ? ThinkingLevel.HIGH
+            : ThinkingLevel.MEDIUM;
+
+      const inputChars =
+        systemInstruction.length +
+        sanitizedMessages.reduce((acc, m) => acc + m.parts[0].text.length, 0);
+      let outputChars = 0;
+      let reportedTotalTokens = 0;
+
+      const stream = await geminiClient.models.generateContentStream({
+        model: selectedModel,
+        contents: sanitizedMessages,
+        config:
+          selectedModel === 'gemini-4-hydrogen'
+            ? {
+                systemInstruction,
+                abortSignal: clientAbort.signal,
+                thinkingConfig: { thinkingLevel: thinkingEnum },
+              }
+            : {
+                systemInstruction,
+                abortSignal: clientAbort.signal,
+              },
+      });
+
+      for await (const chunk of stream) {
+        if (clientDisconnected || res.writableEnded) break;
+        const usageTotal = chunk.usageMetadata?.totalTokenCount;
+        if (typeof usageTotal === 'number' && usageTotal > reportedTotalTokens) {
+          reportedTotalTokens = usageTotal;
+        }
+        const text = chunk.text ?? '';
+        if (text) {
+          outputChars += text.length;
+          res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
+        }
+      }
+
+      const usedTokens =
+        reportedTotalTokens > 0
+          ? reportedTotalTokens
+          : estimateFallbackTokens(inputChars, outputChars);
+      recordTokenUsage(usedTokens);
+
+      if (!clientDisconnected && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'usage', tokensUsed: usedTokens })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      }
+    } catch (err) {
+      if (clientDisconnected) return;
+      const classified = classifyGeminiError(err);
+      recordCharacterError('ai_studio', classified.code, classified.message);
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: classified.message })}\n\n`);
+      }
+    } finally {
+      endCharacterTask('ai_studio');
+      clearInterval(keepAliveTimer);
+      if (!res.writableEnded) {
+        res.end();
+      }
+    }
+  });
+
   app.get('/api/antigravity/status', async (_req, res) => {
     const files = await listSafeWorkspaceFiles();
     res.json({
@@ -373,9 +807,20 @@ async function startServer() {
       geminiClient = createGeminiClient();
     } catch (err) {
       const classified = classifyGeminiError(err);
+      recordCharacterError('antigravity', classified.code, classified.message);
       res.status(classified.status).json({ error: classified.message });
       return;
     }
+
+    const agyTaskLabel = summarizeTaskLabel(
+      sanitizedMessages[sanitizedMessages.length - 1].parts[0].text,
+      mode === 'workspace'
+        ? 'สำรวจไฟล์โปรเจกต์'
+        : mode === 'arch'
+          ? 'วิเคราะห์สถาปัตยกรรม'
+          : 'ตรวจโค้ด & แก้บัค'
+    );
+    beginCharacterTask('antigravity', agyTaskLabel);
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -446,6 +891,12 @@ async function startServer() {
       );
 
       let emittedAnyChunk = false;
+      let agyOutputChars = 0;
+      let agyReportedTokens = 0;
+      const agyInputChars =
+        systemInstruction.length +
+        sanitizedMessages.reduce((acc, m) => acc + m.parts[0].text.length, 0);
+
       const runStream = async (
         modelName: string,
         useLowThinking: boolean,
@@ -490,9 +941,14 @@ async function startServer() {
             if (clientDisconnected || res.writableEnded) {
               break;
             }
+            const usageTotal = chunk.usageMetadata?.totalTokenCount;
+            if (typeof usageTotal === 'number' && usageTotal > agyReportedTokens) {
+              agyReportedTokens = usageTotal;
+            }
             const text = chunk.text ?? '';
             if (text) {
               emittedAnyChunk = true;
+              agyOutputChars += text.length;
               res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
             }
           }
@@ -517,16 +973,25 @@ async function startServer() {
         await runStream(FALLBACK_MODEL, true, 30000);
       }
 
+      const usedTokens =
+        agyReportedTokens > 0
+          ? agyReportedTokens
+          : estimateFallbackTokens(agyInputChars, agyOutputChars);
+      recordTokenUsage(usedTokens);
+
       if (!clientDisconnected && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'usage', tokensUsed: usedTokens })}\n\n`);
         res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
       }
     } catch (err) {
       if (clientDisconnected) return;
       const classified = classifyGeminiError(err);
+      recordCharacterError('antigravity', classified.code, classified.message);
       if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: 'error', error: classified.message })}\n\n`);
       }
     } finally {
+      endCharacterTask('antigravity');
       clearInterval(keepAliveTimer);
       if (!res.writableEnded) {
         res.end();
@@ -619,9 +1084,20 @@ async function startServer() {
       geminiClient = createGeminiClient();
     } catch (err) {
       const classified = classifyGeminiError(err);
+      recordCharacterError('mina', classified.code, classified.message);
       res.status(classified.status).json({ error: classified.message });
       return;
     }
+
+    const minaTaskLabel = summarizeTaskLabel(
+      sanitizedMessages[sanitizedMessages.length - 1].parts[0].text,
+      mode === 'brainstorm'
+        ? 'ระดมไอเดียงาน'
+        : mode === 'draft'
+          ? 'ร่างเอกสารงาน'
+          : 'ตอบคำถามช่วยงาน'
+    );
+    beginCharacterTask('mina', minaTaskLabel);
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -651,6 +1127,11 @@ async function startServer() {
       let emittedAnyChunk = false;
       let emittedText = false;
       let emittedTaskProposal = false;
+      let minaOutputChars = 0;
+      let minaReportedTokens = 0;
+      const minaInputChars =
+        systemInstruction.length +
+        sanitizedMessages.reduce((acc, m) => acc + m.parts[0].text.length, 0);
 
       const runStream = async (
         modelName: string,
@@ -699,6 +1180,11 @@ async function startServer() {
             }
             if (clientDisconnected || res.writableEnded) {
               break;
+            }
+
+            const usageTotal = chunk.usageMetadata?.totalTokenCount;
+            if (typeof usageTotal === 'number' && usageTotal > minaReportedTokens) {
+              minaReportedTokens = usageTotal;
             }
 
             const fnCalls = chunk.functionCalls;
@@ -754,6 +1240,7 @@ async function startServer() {
             if (text) {
               emittedText = true;
               emittedAnyChunk = true;
+              minaOutputChars += text.length;
               res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
             }
           }
@@ -796,7 +1283,14 @@ async function startServer() {
         );
       }
 
+      const usedTokens =
+        minaReportedTokens > 0
+          ? minaReportedTokens
+          : estimateFallbackTokens(minaInputChars, minaOutputChars);
+      recordTokenUsage(usedTokens);
+
       if (!clientDisconnected && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'usage', tokensUsed: usedTokens })}\n\n`);
         res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
       }
     } catch (err) {
@@ -804,11 +1298,13 @@ async function startServer() {
         return;
       }
       const classified = classifyGeminiError(err);
+      recordCharacterError('mina', classified.code, classified.message);
       console.error('Gemini assistant streaming error:', classified.code, err);
       if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: 'error', error: classified.message })}\n\n`);
       }
     } finally {
+      endCharacterTask('mina');
       clearInterval(keepAliveTimer);
       if (!res.writableEnded) {
         res.end();

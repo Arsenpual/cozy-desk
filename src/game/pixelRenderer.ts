@@ -1,6 +1,9 @@
 import type {
   AssistantMood,
   CameraTransform,
+  CharacterId,
+  CharacterStatusMap,
+  CharacterStatusSnapshot,
   InspectHoverRenderState,
   InteractableObject,
   MinaNpcState,
@@ -10,6 +13,9 @@ import type {
 import {
   AGY_APPROACH_RADIUS,
   AGY_POS,
+  AISTUDIO_APPROACH_RADIUS,
+  AISTUDIO_DESK_RECT,
+  AISTUDIO_POS,
   CAMERA_BASE_SCALE,
   CENTER_TABLE_RECT,
   DIVIDER_COL,
@@ -58,6 +64,8 @@ export interface RenderContextState {
   isTvOn: boolean;
   isDriveOpen: boolean;
   isAntigravityOpen?: boolean;
+  isAiStudioOpen?: boolean;
+  characterStatuses?: CharacterStatusMap;
   camera: CameraTransform;
   inspectHover?: InspectHoverRenderState | null;
   viewW?: number;
@@ -635,6 +643,43 @@ function drawAntigravityProximityZone(
   ctx.restore();
 }
 
+function drawAiStudioProximityZone(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  isAiStudioOpen: boolean,
+  tick: number
+) {
+  const dist = Math.hypot(player.x - AISTUDIO_POS.x, player.y - AISTUDIO_POS.y);
+  const inOffice = getRoomZone(player.x, player.y) === 'office';
+  if (!inOffice) return;
+
+  const isInside = dist <= AISTUDIO_APPROACH_RADIUS || isAiStudioOpen;
+  const pulse = 0.04 * Math.sin(tick * 0.08);
+  const strokeAlpha = isInside ? 0.48 + pulse : 0.18;
+  const fillAlpha = isInside ? 0.09 : 0.03;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(
+    (DIVIDER_COL + 1.05) * TILE,
+    2.1 * TILE,
+    (OFFICE_EAST_WALL_COL - DIVIDER_COL - 1.15) * TILE,
+    9.75 * TILE
+  );
+  ctx.clip();
+
+  ctx.beginPath();
+  ctx.arc(AISTUDIO_POS.x, AISTUDIO_POS.y, AISTUDIO_APPROACH_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(66, 133, 244, ${fillAlpha.toFixed(3)})`;
+  ctx.fill();
+
+  ctx.setLineDash([5, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = `rgba(96, 165, 250, ${strokeAlpha.toFixed(3)})`;
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawPottedPlant(ctx: CanvasRenderingContext2D, x: number, y: number, variant: 'monstera' | 'fern') {
   // Shadow
   pxRect(ctx, x + 3, y + 22, 22, 6, 'rgba(30,20,14,0.25)');
@@ -1178,6 +1223,60 @@ function drawOfficeFurniture(
   // Energy Drink / Dark Espresso Tumbler on top-right corner
   pxRect(ctx, agx + 28, agy + 7, 8, 9, '#1E293B');
   pxRect(ctx, agx + 29, agy + 6, 6, 2, '#38BDF8');
+
+  // =========================================================================
+  // 7. GOOGLE AI STUDIO PROMPT LAB STATION (south-center bay of Home Office)
+  // =========================================================================
+  const stx = Math.round(AISTUDIO_DESK_RECT.x);
+  const sty = Math.round(AISTUDIO_DESK_RECT.y);
+  const stw = Math.round(AISTUDIO_DESK_RECT.w); // ~82
+  const sth = Math.round(AISTUDIO_DESK_RECT.h); // ~34
+
+  // Ergonomic Cobalt Studio Swivel Chair at AISTUDIO_POS (facing south toward AI Studio workbench)
+  const scX = Math.round(AISTUDIO_POS.x);
+  const scY = Math.round(AISTUDIO_POS.y);
+  pxRect(ctx, scX - 10, scY + 6, 20, 5, 'rgba(20, 24, 38, 0.25)');
+  pxRect(ctx, scX - 7, scY + 4, 14, 3, '#2D3448');
+  pxRect(ctx, scX - 8, scY - 4, 16, 10, '#1D4ED8');
+  pxRect(ctx, scX - 6, scY - 2, 12, 6, '#3B82F6');
+  // Sleek backrest on NORTH side (character sits facing south toward studio screens)
+  pxRect(ctx, scX - 8, scY - 8, 16, 4, '#1E3A8A');
+  pxRect(ctx, scX - 6, scY - 7, 12, 2, '#60A5FA');
+
+  // Sleek Brushed-Slate & Cobalt Lab Desk against south office wall
+  pxRect(ctx, stx + 2, sty + sth - 1, stw - 4, 5, 'rgba(18, 22, 34, 0.3)');
+  pxRect(ctx, stx, sty, stw, sth, '#1C2538');
+  pxRect(ctx, stx + 3, sty + 3, stw - 6, sth - 7, '#273552');
+  pxRect(ctx, stx + 3, sty + 3, stw - 6, 2, '#4285F4'); // Signature Google blue edge trim
+
+  // Compact Keyboard & Prompt Pad on north-center edge (in front of AI Studio character)
+  pxRect(ctx, stx + 26, sty + 5, 28, 7, '#111827');
+  pxRect(ctx, stx + 28, sty + 7, 24, 3, '#DBEAFE');
+  pxRect(ctx, stx + 56, sty + 6, 6, 5, '#93C5FD');
+
+  // Dual Studio Monitor Bar along south edge (angled slightly toward character)
+  pxRect(ctx, stx + 20, sty + 15, 42, 13, '#0F172A');
+  pxRect(ctx, stx + 22, sty + 17, 38, 9, '#172554');
+  const sparkPhase = Math.floor(tick / 10) % 4;
+  pxRect(ctx, stx + 25, sty + 19, 12 + (sparkPhase % 2) * 3, 2, '#60A5FA');
+  pxRect(ctx, stx + 25, sty + 22, 18 - (sparkPhase % 2) * 2, 2, '#93C5FD');
+  pxRect(ctx, stx + 48, sty + 19, 9, 5, sparkPhase % 2 === 0 ? '#38BDF8' : '#818CF8');
+  // Subtle blue screen glow cast north onto desk
+  pxRect(ctx, stx + 22, sty + 12, 38, 3, 'rgba(96, 165, 250, 0.16)');
+
+  // Mini Gemini 4-point Spark Hologram Pedestal on left corner of desk
+  pxRect(ctx, stx + 6, sty + 11, 10, 10, '#111827');
+  pxRect(ctx, stx + 8, sty + 13, 6, 6, '#1E3A8A');
+  const holoColor = Math.floor(tick / 12) % 2 === 0 ? '#93C5FD' : '#60A5FA';
+  pxRect(ctx, stx + 10, sty + 12, 2, 8, holoColor);
+  pxRect(ctx, stx + 7, sty + 15, 8, 2, holoColor);
+  pxRect(ctx, stx + 10, sty + 15, 2, 2, '#EFF6FF');
+
+  // Studio Reference Notebook & Stylus on right corner
+  pxRect(ctx, stx + 65, sty + 12, 12, 14, '#E2E8F0');
+  pxRect(ctx, stx + 67, sty + 14, 8, 2, '#2563EB');
+  pxRect(ctx, stx + 67, sty + 18, 7, 1, '#64748B');
+  pxRect(ctx, stx + 67, sty + 21, 6, 1, '#64748B');
 }
 
 function drawCenterDriveTable(
@@ -1419,28 +1518,6 @@ function drawMinaNpc(
   }
 }
 
-function drawMinaBubbleOverlay(
-  ctx: CanvasRenderingContext2D,
-  mina: MinaNpcState,
-  mood: AssistantMood,
-  tick: number,
-  bubbleText: string | null
-) {
-  const x = Math.round(mina.x);
-  const y = Math.round(mina.y);
-
-  if (mood === 'thinking') {
-    const dots = '.'.repeat((Math.floor(tick / 14) % 3) + 1);
-    drawSpeechBubble(ctx, x, y - 34, `กำลังคิด${dots}`, '#FAF6F0', '#D97736');
-  } else if (bubbleText) {
-    const border =
-      mina.phase === 'walking_to_board' || mina.phase === 'pinning'
-        ? '#D97736'
-        : '#4D7C6F';
-    drawSpeechBubble(ctx, x, y - 34, bubbleText, '#FAF6F0', border);
-  }
-}
-
 function drawAntigravityNpc(
   ctx: CanvasRenderingContext2D,
   player: PlayerState,
@@ -1512,59 +1589,318 @@ function drawAntigravityNpc(
   pxRect(ctx, x - 2 + eyeShift, y - 11 + breathe, 4, 1, '#A16E54');
 }
 
-function drawAntigravityOverlay(
+function drawAiStudioNpc(
   ctx: CanvasRenderingContext2D,
   player: PlayerState,
   tick: number,
-  isAntigravityOpen: boolean
+  isAiStudioOpen: boolean,
+  status?: CharacterStatusSnapshot
 ) {
-  const x = Math.round(AGY_POS.x);
-  const y = Math.round(AGY_POS.y) - 34;
-  const distToPlayer = Math.hypot(player.x - AGY_POS.x, player.y - AGY_POS.y);
+  const x = Math.round(AISTUDIO_POS.x);
+  const y = Math.round(AISTUDIO_POS.y);
+  const distToPlayer = Math.hypot(player.x - AISTUDIO_POS.x, player.y - AISTUDIO_POS.y);
   const isEngaged =
-    isAntigravityOpen ||
-    (getRoomZone(player.x, player.y) === 'office' && distToPlayer <= AGY_APPROACH_RADIUS);
-  const floatOffset = Math.sin(tick * 0.08) > 0 ? -1 : 0;
-  const by = y + floatOffset;
+    isAiStudioOpen ||
+    (getRoomZone(player.x, player.y) === 'office' && distToPlayer <= AISTUDIO_APPROACH_RADIUS);
+  const isBusy = status?.status === 'busy';
+  const isUnavailable = status?.status === 'unavailable';
+  const breathe = Math.sin(tick * 0.085) > 0.35 ? 1 : 0;
+  const blink = tick % 185 > 179;
+
+  // Floor shadow & legs when standing/turned to greet player
+  if (isEngaged) {
+    pxRect(ctx, x - 9, y + 6, 18, 5, 'rgba(18, 24, 42, 0.28)');
+    pxRect(ctx, x - 6, y + 2, 5, 6, '#1E293B');
+    pxRect(ctx, x + 1, y + 2, 5, 6, '#1E293B');
+  }
+
+  // Torso: crisp Google AI Studio cobalt-blue & alabaster lab jacket
+  pxRect(ctx, x - 8, y - 8 + breathe, 16, 12, '#EFF6FF');
+  pxRect(ctx, x - 7, y - 7 + breathe, 4, 10, '#2563EB');
+  pxRect(ctx, x + 3, y - 7 + breathe, 4, 10, '#2563EB');
+  // Luminous Gemini spark chest badge
+  const badgeColor = isUnavailable
+    ? '#F87171'
+    : isBusy
+      ? Math.floor(tick / 6) % 2 === 0
+        ? '#FBBF24'
+        : '#60A5FA'
+      : Math.floor(tick / 16) % 2 === 0
+        ? '#3B82F6'
+        : '#60A5FA';
+  pxRect(ctx, x - 1, y - 5 + breathe, 2, 4, badgeColor);
+  pxRect(ctx, x - 2, y - 4 + breathe, 4, 2, badgeColor);
+
+  // Arms: typing toward studio keyboard when seated/busy, or welcoming gesture when player enters radius
+  if (!isEngaged) {
+    const speed = isBusy ? 4 : 7;
+    const typeShift = Math.floor(tick / speed) % 2;
+    pxRect(ctx, x - 10, y - 3 + typeShift, 4, 8, '#2563EB');
+    pxRect(ctx, x - 9, y + 4 + typeShift, 3, 3, '#F4C6A3');
+    pxRect(ctx, x + 6, y - 3 + (1 - typeShift), 4, 8, '#2563EB');
+    pxRect(ctx, x + 6, y + 4 + (1 - typeShift), 3, 3, '#F4C6A3');
+  } else {
+    const waveY = Math.floor(tick / 9) % 2 === 0 ? -12 : -9;
+    pxRect(ctx, x - 11, y - 6 + breathe, 3, 9, '#2563EB');
+    pxRect(ctx, x + 8, y + waveY, 4, 8, '#2563EB');
+    pxRect(ctx, x + 8, y + waveY - 2, 4, 3, '#F4C6A3');
+  }
+
+  // Head & face
+  pxRect(ctx, x - 7, y - 21 + breathe, 14, 13, '#F6CCB0');
+  pxRect(ctx, x - 6, y - 10 + breathe, 12, 2, '#E5B492');
+
+  // Sleek cobalt-slate modern hair with bright sky highlight
+  pxRect(ctx, x - 8, y - 25 + breathe, 16, 6, '#1E3A8A');
+  pxRect(ctx, x - 7, y - 26 + breathe, 14, 2, '#3B82F6');
+  pxRect(ctx, x - 9, y - 22 + breathe, 3, 7, '#1E3A8A');
+  pxRect(ctx, x + 6, y - 22 + breathe, 3, 7, '#1E3A8A');
+  // Signature twin blue spark hairclip accent
+  pxRect(ctx, x + 4, y - 23 + breathe, 2, 2, '#93C5FD');
+
+  // Eyes (glancing toward player when engaged, or focused down at studio screens)
+  const eyeShift = isEngaged ? (player.x > x + 8 ? 1 : player.x < x - 8 ? -1 : 0) : 0;
+  if (!blink) {
+    pxRect(ctx, x - 5 + eyeShift, y - 16 + breathe, 3, 3, '#1E293B');
+    pxRect(ctx, x + 2 + eyeShift, y - 16 + breathe, 3, 3, '#1E293B');
+    pxRect(ctx, x - 4 + eyeShift, y - 15 + breathe, 1, 1, '#93C5FD');
+    pxRect(ctx, x + 3 + eyeShift, y - 15 + breathe, 1, 1, '#93C5FD');
+  } else {
+    pxRect(ctx, x - 5 + eyeShift, y - 14 + breathe, 3, 1, '#1E293B');
+    pxRect(ctx, x + 2 + eyeShift, y - 14 + breathe, 3, 1, '#1E293B');
+  }
+  // Subtle friendly smile
+  pxRect(ctx, x - 2 + eyeShift, y - 11 + breathe, 4, 1, '#A16E54');
+}
+
+function formatCompactTokensShort(n: number): string {
+  const safe = Math.max(0, Math.round(n));
+  if (safe >= 1_000_000) {
+    const m = safe / 1_000_000;
+    return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (safe >= 1_000) {
+    const k = safe / 1_000;
+    return `${k >= 100 || k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+  }
+  return String(safe);
+}
+
+function formatResetClockShort(resetAtMs: number): string {
+  const d = new Date(resetAtMs);
+  if (Number.isNaN(d.getTime())) return '00:00 น.';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} น.`;
+}
+
+function truncateText(raw: string, maxChars: number): string {
+  const cleaned = raw.replace(/\s+/g, ' ').trim();
+  if (cleaned.length <= maxChars) return cleaned;
+  return `${cleaned.slice(0, maxChars - 1)}…`;
+}
+
+interface ActiveOverlayCandidate {
+  id: CharacterId;
+  x: number;
+  y: number;
+  dist: number;
+  priority: number;
+  interactableId: 'mina_desk' | 'antigravity_desk' | 'ai_studio_desk';
+  fallbackName: string;
+  accentColor: string;
+}
+
+/**
+ * Renders AT MOST ONE character's overhead status card (only when player is inside that
+ * character's proximity radius or actively interacting with them), stacking any speech
+ * bubble strictly bottom-to-top with zero overlapping layers.
+ */
+function drawActiveCharacterOverlay(
+  ctx: CanvasRenderingContext2D,
+  state: RenderContextState
+) {
+  const inOffice = getRoomZone(state.player.x, state.player.y) === 'office';
+  const candidates: ActiveOverlayCandidate[] = [];
+
+  const minaDistToPlayer = Math.hypot(state.player.x - state.mina.x, state.player.y - state.mina.y);
+  const minaDistToDesk = Math.hypot(state.player.x - MINA_POS.x, state.player.y - MINA_POS.y);
+  const minaEngaged =
+    state.isWorking ||
+    (inOffice && (minaDistToDesk <= MINA_APPROACH_RADIUS || minaDistToPlayer <= MINA_APPROACH_RADIUS));
+  if (minaEngaged) {
+    candidates.push({
+      id: 'mina',
+      x: Math.round(state.mina.x),
+      y: Math.round(state.mina.y),
+      dist: Math.min(minaDistToPlayer, minaDistToDesk),
+      priority: state.isWorking ? 3 : 1,
+      interactableId: 'mina_desk',
+      fallbackName: 'มีน่า',
+      accentColor: '#6B9080',
+    });
+  }
+
+  const agyDist = Math.hypot(state.player.x - AGY_POS.x, state.player.y - AGY_POS.y);
+  const agyEngaged =
+    Boolean(state.isAntigravityOpen) || (inOffice && agyDist <= AGY_APPROACH_RADIUS);
+  if (agyEngaged) {
+    candidates.push({
+      id: 'antigravity',
+      x: Math.round(AGY_POS.x),
+      y: Math.round(AGY_POS.y),
+      dist: agyDist,
+      priority: state.isAntigravityOpen ? 3 : 1,
+      interactableId: 'antigravity_desk',
+      fallbackName: 'Antigravity',
+      accentColor: '#38BDF8',
+    });
+  }
+
+  const aiStudioDist = Math.hypot(state.player.x - AISTUDIO_POS.x, state.player.y - AISTUDIO_POS.y);
+  const aiStudioEngaged =
+    Boolean(state.isAiStudioOpen) || (inOffice && aiStudioDist <= AISTUDIO_APPROACH_RADIUS);
+  if (aiStudioEngaged) {
+    candidates.push({
+      id: 'ai_studio',
+      x: Math.round(AISTUDIO_POS.x),
+      y: Math.round(AISTUDIO_POS.y),
+      dist: aiStudioDist,
+      priority: state.isAiStudioOpen ? 3 : 1,
+      interactableId: 'ai_studio_desk',
+      fallbackName: 'Google AI Studio',
+      accentColor: '#60A5FA',
+    });
+  }
+
+  // If player is outside every character's radius, show NOTHING (except Mina's active pinboard mission speech bubble)
+  if (candidates.length === 0) {
+    if (
+      (state.mina.phase === 'walking_to_board' || state.mina.phase === 'pinning') &&
+      state.minaBubbleText
+    ) {
+      drawSpeechBubble(
+        ctx,
+        Math.round(state.mina.x),
+        Math.round(state.mina.y) - 30,
+        state.minaBubbleText,
+        '#FAF6F0',
+        '#D97736'
+      );
+    }
+    return;
+  }
+
+  // Strictly pick ONE active character (highest priority, then closest to player)
+  candidates.sort((a, b) => b.priority - a.priority || a.dist - b.dist);
+  const active = candidates[0];
+  const snapshot = state.characterStatuses?.[active.id];
+
+  // Bottom-to-top stacking cursor anchored cleanly above character head
+  let stackBottomY = active.y - 29;
+
+  // Build compact 2-line status plate content
+  const charName = snapshot?.name || active.fallbackName;
+  const statusKind = snapshot?.status ?? 'ready';
+  const showInlineInteractCue =
+    !state.isWorking &&
+    !state.isTvOn &&
+    !state.isAntigravityOpen &&
+    !state.isAiStudioOpen &&
+    state.nearestInteractable?.id === active.interactableId;
+
+  let dotColor = '#34D399';
+  let borderColor = active.accentColor;
+  let detailText = '';
+  let detailColor = '#CBD5E1';
+
+  if (statusKind === 'unavailable') {
+    dotColor = '#F87171';
+    borderColor = '#EF4444';
+    const reason = truncateText(snapshot?.unavailableReason || 'ระบบไม่พร้อมใช้งาน', 30);
+    detailText = `ใช้งานไม่ได้: ${reason}`;
+    detailColor = '#FCA5A5';
+  } else if (statusKind === 'busy') {
+    dotColor = Math.floor(state.tick / 12) % 2 === 0 ? '#FBBF24' : '#F59E0B';
+    borderColor = '#F59E0B';
+    const task = truncateText(snapshot?.currentTask || 'กำลังประมวลผลคำสั่ง', 28);
+    detailText = `กำลังทำ: ${task}`;
+    detailColor = '#FDE68A';
+  } else if (snapshot) {
+    dotColor = '#34D399';
+    borderColor = active.accentColor;
+    detailText = `Token เหลือ ${formatCompactTokensShort(snapshot.tokensRemaining)} · รีเซ็ต ${formatResetClockShort(snapshot.resetAt)}`;
+    detailColor = '#BAE6FD';
+  } else {
+    detailText = 'พร้อมใช้งาน';
+    detailColor = '#BAE6FD';
+  }
 
   ctx.save();
-  if (isEngaged) {
-    const text = isAntigravityOpen
-      ? 'AGY · เชื่อมต่อ localhost:3000 แล้ว'
-      : 'Antigravity · พร้อมรันงานบน localhost!';
-    ctx.font = '600 10px "IBM Plex Sans Thai", sans-serif';
-    const w = Math.ceil(ctx.measureText(text).width) + 18;
-    const h = 20;
-    const bx = Math.round(x - w / 2);
+  ctx.font = '700 9.5px "IBM Plex Sans Thai", sans-serif';
+  const nameW = Math.ceil(ctx.measureText(charName).width);
+  const cueText = showInlineInteractCue ? '[E]' : '';
+  ctx.font = '700 8.5px monospace';
+  const cueW = cueText ? Math.ceil(ctx.measureText(cueText).width) + 8 : 0;
 
-    pxRect(ctx, bx - 1, by - h - 1, w + 2, h + 2, '#38BDF8');
-    pxRect(ctx, bx, by - h, w, h, '#141926');
-    pxRect(
-      ctx,
-      bx + 6,
-      by - h + 8,
-      4,
-      4,
-      Math.floor(tick / 15) % 2 === 0 ? '#34D399' : '#10B981'
-    );
-    ctx.fillStyle = '#F0F9FF';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, bx + 13, by - h / 2 + 0.5);
-  } else {
-    const w = 34;
-    const h = 14;
-    const bx = Math.round(x - w / 2);
-    pxRect(ctx, bx - 1, by - h - 1, w + 2, h + 2, '#334155');
-    pxRect(ctx, bx, by - h, w, h, '#141926');
-    pxRect(ctx, bx + 4, by - h + 5, 3, 3, '#34D399');
-    ctx.font = '700 8.5px monospace';
-    ctx.fillStyle = '#7DD3FC';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('AGY', bx + 10, by - h / 2 + 0.5);
+  ctx.font = '500 9px "IBM Plex Sans Thai", sans-serif';
+  const detailW = Math.ceil(ctx.measureText(detailText).width);
+
+  const headerRowW = 8 + nameW + (cueW > 0 ? 10 + cueW : 0);
+  const plateW = Math.min(224, Math.max(118, Math.max(headerRowW, detailW) + 16));
+  const plateH = 31;
+
+  let plateX = Math.round(active.x - plateW / 2);
+  plateX = Math.max(8, Math.min(WORLD_W - plateW - 8, plateX));
+  const plateTopY = Math.max(8, Math.round(stackBottomY - plateH));
+
+  // Crisp pixel card backdrop & border
+  pxRect(ctx, plateX - 1, plateTopY - 1, plateW + 2, plateH + 2, borderColor);
+  pxRect(ctx, plateX, plateTopY, plateW, plateH, 'rgba(18, 22, 32, 0.94)');
+  // Pointer notch centered over character
+  const notchX = Math.max(plateX + 6, Math.min(plateX + plateW - 10, active.x - 2));
+  pxRect(ctx, notchX - 1, plateTopY + plateH, 6, 3, borderColor);
+  pxRect(ctx, notchX, plateTopY + plateH - 1, 4, 3, '#121620');
+
+  // Row 1: status dot + character name + optional inline [E] badge
+  pxRect(ctx, plateX + 7, plateTopY + 7, 4, 4, dotColor);
+  ctx.font = '700 9.5px "IBM Plex Sans Thai", sans-serif';
+  ctx.fillStyle = '#F8FAFC';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(charName, plateX + 14, plateTopY + 9.5);
+
+  if (cueText) {
+    const badgeW = cueW;
+    const badgeX = plateX + plateW - badgeW - 5;
+    pxRect(ctx, badgeX, plateTopY + 3.5, badgeW, 11, '#D97736');
+    ctx.font = '700 8px monospace';
+    ctx.fillStyle = '#FAF6F0';
+    ctx.textAlign = 'center';
+    ctx.fillText(cueText, badgeX + badgeW / 2, plateTopY + 9.2);
   }
+
+  // Row 2: single concise status line (token+reset / busy task / unavailable reason)
+  ctx.font = '500 9px "IBM Plex Sans Thai", sans-serif';
+  ctx.fillStyle = detailColor;
+  ctx.textAlign = 'left';
+  ctx.fillText(detailText, plateX + 7, plateTopY + 22.5, plateW - 14);
   ctx.restore();
+
+  // Advance bottom-to-top cursor strictly above the status plate (5px gap — zero layer overlap)
+  stackBottomY = plateTopY - 6;
+
+  // Layer 2 (only if active character is Mina & she has an active bubble/thinking text)
+  if (active.id === 'mina' && stackBottomY >= 26) {
+    if (state.assistantMood === 'thinking') {
+      const dots = '.'.repeat((Math.floor(state.tick / 14) % 3) + 1);
+      drawSpeechBubble(ctx, active.x, stackBottomY, `กำลังคิด${dots}`, '#FAF6F0', '#D97736');
+    } else if (state.minaBubbleText) {
+      const bubbleBorder =
+        state.mina.phase === 'walking_to_board' || state.mina.phase === 'pinning'
+          ? '#D97736'
+          : '#4D7C6F';
+      drawSpeechBubble(ctx, active.x, stackBottomY, state.minaBubbleText, '#FAF6F0', bubbleBorder);
+    }
+  }
 }
 
 function drawShoweringPlayerSilhouette(
@@ -1810,7 +2146,8 @@ function drawSpeechBubble(
 function drawInteractableHighlight(
   ctx: CanvasRenderingContext2D,
   item: InteractableObject,
-  tick: number
+  tick: number,
+  suppressFloatingLabel = false
 ) {
   const pulse = 0.55 + Math.sin(tick * 0.12) * 0.25;
   ctx.save();
@@ -1823,7 +2160,12 @@ function drawInteractableHighlight(
     Math.round(item.h) + 4
   );
 
-  // Floating [E] prompt tag above object
+  if (suppressFloatingLabel) {
+    ctx.restore();
+    return;
+  }
+
+  // Floating [E] prompt tag above non-character furniture objects
   const cx = item.x + item.w / 2;
   const cy = Math.max(26, item.y - 8);
   const label = `[E] ${item.actionLabel}`;
@@ -1978,6 +2320,7 @@ function drawAtmosphereLighting(
     { x: 16.65 * TILE, y: 8.2 * TILE, r: 94 * lampFlicker, color: `rgba(255, 204, 118, ${glowAlpha * 0.78})` },
     { x: 22.1 * TILE, y: 6.55 * TILE, r: 90 * lampFlicker, color: `rgba(255, 196, 108, ${glowAlpha * 0.95})` },
     { x: 12.1 * TILE, y: 10.5 * TILE, r: 74 * lampFlicker, color: `rgba(125, 211, 252, ${glowAlpha * 0.65})` },
+    { x: 16.88 * TILE, y: 11.1 * TILE, r: 78 * lampFlicker, color: `rgba(96, 165, 250, ${glowAlpha * 0.72})` },
     { x: 7.9 * TILE, y: 1.9 * TILE, r: 80 * lampFlicker, color: `rgba(244, 120, 56, ${glowAlpha * 0.95})` },
     // Lower wing lighting: kitchen range hood, dining pendant, bathroom vanity sconces & shower overhead
     { x: 3.95 * TILE, y: 14.1 * TILE, r: 78, color: `rgba(255, 214, 138, ${glowAlpha * 0.85})` },
@@ -2071,6 +2414,12 @@ export function renderHouseScene(
     Boolean(state.isAntigravityOpen),
     state.tick
   );
+  drawAiStudioProximityZone(
+    ctx,
+    state.player,
+    Boolean(state.isAiStudioOpen),
+    state.tick
+  );
 
   // 2. Walls, Windows, Fireplace, Pinboard & Lower Wing Architectural Walls
   const isPinboardActive =
@@ -2149,6 +2498,17 @@ export function renderHouseScene(
       draw: () =>
         drawAntigravityNpc(ctx, state.player, state.tick, Boolean(state.isAntigravityOpen)),
     },
+    {
+      y: AISTUDIO_POS.y,
+      draw: () =>
+        drawAiStudioNpc(
+          ctx,
+          state.player,
+          state.tick,
+          Boolean(state.isAiStudioOpen),
+          state.characterStatuses?.ai_studio
+        ),
+    },
   ];
   if (!minaBehindDesk) {
     drawList.push({
@@ -2164,25 +2524,17 @@ export function renderHouseScene(
   // 6. Cozy dynamic lighting
   drawAtmosphereLighting(ctx, state.timeOfDay, state.tick, tvScreenActive);
 
-  // 7. Mina's floating speech bubble & Antigravity localhost status overlay
-  drawMinaBubbleOverlay(
-    ctx,
-    state.mina,
-    state.assistantMood,
-    state.tick,
-    state.minaBubbleText
-  );
-  drawAntigravityOverlay(
-    ctx,
-    state.player,
-    state.tick,
-    Boolean(state.isAntigravityOpen)
-  );
-
-  // 8. Interactable highlight & [E] cue (drawn above lighting for crisp legibility)
+  // 7. Interactable highlight (suppresses duplicate floating [E] tag for AI characters whose plate includes [E])
   if (state.nearestInteractable && !state.isWorking && !state.isTvOn) {
-    drawInteractableHighlight(ctx, state.nearestInteractable, state.tick);
+    const isCharacterStation =
+      state.nearestInteractable.id === 'mina_desk' ||
+      state.nearestInteractable.id === 'antigravity_desk' ||
+      state.nearestInteractable.id === 'ai_studio_desk';
+    drawInteractableHighlight(ctx, state.nearestInteractable, state.tick, isCharacterStation);
   }
+
+  // 8. Proximity-only, single-character, bottom-to-top non-overlapping overhead status plate & bubble
+  drawActiveCharacterOverlay(ctx, state);
 
   // 9. World-space hover inspect highlight outline
   if (state.inspectHover) {

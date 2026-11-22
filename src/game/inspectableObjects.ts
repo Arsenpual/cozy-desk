@@ -1,5 +1,6 @@
 import type { InspectableObject } from '../types/game';
 import {
+  AISTUDIO_DESK_RECT,
   BATH_DOOR_ROW_END,
   BATH_DOOR_ROW_START,
   DIVIDER_COL,
@@ -551,9 +552,26 @@ export const KITCHEN_INSPECTABLES: InspectableObject[] = [
   },
 ];
 
+export const OFFICE_INSPECTABLES: InspectableObject[] = [
+  {
+    id: 'office_ai_studio_station',
+    zone: 'office',
+    areaLabel: 'ห้องทำงาน · สถานี AI Lab',
+    name: 'สถานี Google AI Studio',
+    detail:
+      'โต๊ะทดลอง Prompt Lab, App Builder และ JSON Schema พร้อมตัวละครผู้ช่วย Google AI Studio เดินเข้าใกล้แล้วกด E หรือคลิกเพื่อเปิดเวิร์กเบนช์',
+    x: Math.round(AISTUDIO_DESK_RECT.x),
+    y: Math.round(AISTUDIO_DESK_RECT.y - 0.6 * TILE),
+    w: Math.round(AISTUDIO_DESK_RECT.w),
+    h: Math.round(AISTUDIO_DESK_RECT.h + 0.6 * TILE),
+    priority: 18,
+  },
+];
+
 export const INSPECTABLE_OBJECTS: InspectableObject[] = [
   ...BATHROOM_INSPECTABLES,
   ...KITCHEN_INSPECTABLES,
+  ...OFFICE_INSPECTABLES,
 ];
 
 /**

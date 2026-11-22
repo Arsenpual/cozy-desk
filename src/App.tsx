@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   Coffee,
@@ -13,6 +13,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
+import { AiStudioModal, type CharacterTaskActivityUpdate } from './components/AiStudioModal';
 import { AntigravityModal } from './components/AntigravityModal';
 import { DriveTableModal } from './components/DriveTableModal';
 import { GameCanvas } from './components/GameCanvas';
@@ -32,6 +33,9 @@ import type {
   CameraCommand,
   CameraPresetId,
   CameraUiState,
+  CharacterId,
+  CharacterStatusMap,
+  CharacterStatusSnapshot,
   ChatMessage,
   GameState,
   InteractableId,
@@ -153,6 +157,46 @@ function loadStorage<T>(key: string, fallback: T): T {
   }
 }
 
+function getNextLocalMidnightMs(): number {
+  const next = new Date();
+  next.setHours(24, 0, 0, 0);
+  return next.getTime();
+}
+
+function createFallbackCharacterStatuses(): CharacterStatusMap {
+  const resetAt = getNextLocalMidnightMs();
+  const base = (id: CharacterId, name: string): CharacterStatusSnapshot => ({
+    id,
+    name,
+    status: 'ready',
+    tokensRemaining: 250_000,
+    tokensUsed: 0,
+    tokensLimit: 250_000,
+    resetAt,
+    currentTask: null,
+    unavailableReason: null,
+    unavailableCode: null,
+  });
+  return {
+    mina: base('mina', 'มีน่า'),
+    antigravity: base('antigravity', 'Antigravity'),
+    ai_studio: base('ai_studio', 'Google AI Studio'),
+  };
+}
+
+function summarizeMinaTask(prompt: string, mode: WorkMode): string {
+  const cleaned = prompt.replace(/\s+/g, ' ').trim();
+  const prefix =
+    mode === 'draft'
+      ? 'ร่างข้อความ'
+      : mode === 'brainstorm'
+        ? 'ระดมไอเดีย'
+        : 'ตอบคำถาม';
+  if (!cleaned) return prefix;
+  const snippet = cleaned.length > 26 ? `${cleaned.slice(0, 25)}…` : cleaned;
+  return `${prefix}: ${snippet}`;
+}
+
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('TITLE_MENU');
   const [zone, setZone] = useState<RoomZone>('living');
@@ -179,11 +223,21 @@ export default function App() {
   const [toast, setToast] = useState<WorldToast | null>(null);
   const [tipIndex, setTipIndex] = useState(0);
 
-  // Living room YouTube TV, Office Google Tasks Pinboard, and Center Table Google Drive modal states
+  // Living room YouTube TV, Office Google Tasks Pinboard, Drive Table, Antigravity & Google AI Studio modal states
   const [isTvOpen, setIsTvOpen] = useState(false);
   const [isPinboardOpen, setIsPinboardOpen] = useState(false);
   const [isDriveOpen, setIsDriveOpen] = useState(false);
   const [isAntigravityOpen, setIsAntigravityOpen] = useState(false);
+  const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
+  const [serverCharacterStatuses, setServerCharacterStatuses] =
+    useState<CharacterStatusMap | null>(null);
+  const [clientCharacterActivities, setClientCharacterActivities] = useState<
+    Record<CharacterId, CharacterTaskActivityUpdate>
+  >({
+    mina: { busy: false, taskLabel: null },
+    antigravity: { busy: false, taskLabel: null },
+    ai_studio: { busy: false, taskLabel: null },
+  });
   const [customTvFeed, setCustomTvFeed] = useState<TvFeedItem[]>(() =>
     loadStorage<TvFeedItem[]>(STORAGE_TV_FEED_KEY, [])
   );
@@ -257,6 +311,91 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  const fetchCharacterStatuses = useCallback(async () => {
+    try {
+      const res = await fetch('/api/characters/status', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        ok?: boolean;
+        characters?: CharacterStatusMap;
+      };
+      if (data.ok && data.characters) {
+        setServerCharacterStatuses(data.characters);
+      }
+    } catch {
+      // Keep last known snapshot silently
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchCharacterStatuses();
+    const timer = window.setInterval(() => {
+      void fetchCharacterStatuses();
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [fetchCharacterStatuses]);
+
+  const handleUpdateCharacterActivity = useCallback(
+    (characterId: CharacterId, activity: CharacterTaskActivityUpdate) => {
+      setClientCharacterActivities((prev) => ({
+        ...prev,
+        [characterId]: activity,
+      }));
+    },
+    []
+  );
+
+  const characterStatuses = useMemo<CharacterStatusMap>(() => {
+    const base = serverCharacterStatuses ?? createFallbackCharacterStatuses();
+
+    const mergeOne = (id: CharacterId): CharacterStatusSnapshot => {
+      const serverSnap = base[id];
+      const clientAct = clientCharacterActivities[id];
+
+      if (id === 'mina' && assistantMood === 'pinning' && minaMission) {
+        const shortTitle =
+          minaMission.taskTitle.length > 26
+            ? `${minaMission.taskTitle.slice(0, 25)}…`
+            : minaMission.taskTitle;
+        return {
+          ...serverSnap,
+          status: 'busy',
+          currentTask: `ปักหมุดงาน: ${shortTitle}`,
+        };
+      }
+
+      if (clientAct.busy && clientAct.taskLabel) {
+        return {
+          ...serverSnap,
+          status: 'busy',
+          currentTask: clientAct.taskLabel,
+        };
+      }
+
+      if (serverSnap.status === 'unavailable') {
+        return serverSnap;
+      }
+
+      if (clientAct.errorReason) {
+        return {
+          ...serverSnap,
+          status: 'unavailable',
+          currentTask: null,
+          unavailableReason: clientAct.errorReason,
+          unavailableCode: clientAct.errorCode ?? serverSnap.unavailableCode ?? null,
+        };
+      }
+
+      return serverSnap;
+    };
+
+    return {
+      mina: mergeOne('mina'),
+      antigravity: mergeOne('antigravity'),
+      ai_studio: mergeOne('ai_studio'),
+    };
+  }, [assistantMood, clientCharacterActivities, minaMission, serverCharacterStatuses]);
+
   const showToast = useCallback(
     (text: string, speaker: WorldToast['speaker'] = 'house') => {
       if (toastTimerRef.current) {
@@ -324,10 +463,15 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // Global Esc shortcut to close Drive, Pinboard, TV, help, stand up from desk, or exit fullscreen map
+  // Global Esc shortcut to close AI Studio, Antigravity, Drive, Pinboard, TV, help, stand up from desk, or exit fullscreen map
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (isAiStudioOpen) {
+        setIsAiStudioOpen(false);
+        soundEngine.playInteract();
+        return;
+      }
       if (isAntigravityOpen) {
         setIsAntigravityOpen(false);
         soundEngine.playInteract();
@@ -377,6 +521,7 @@ export default function App() {
   }, [
     exitFullscreenMap,
     gameState,
+    isAiStudioOpen,
     isAntigravityOpen,
     isDriveOpen,
     isFullscreenMap,
@@ -405,7 +550,8 @@ export default function App() {
         isTvOpen ||
         isPinboardOpen ||
         isDriveOpen ||
-        isAntigravityOpen
+        isAntigravityOpen ||
+        isAiStudioOpen
       ) {
         return;
       }
@@ -414,7 +560,15 @@ export default function App() {
     };
     window.addEventListener('keydown', handleFullscreenKey);
     return () => window.removeEventListener('keydown', handleFullscreenKey);
-  }, [gameState, isAntigravityOpen, isDriveOpen, isPinboardOpen, isTvOpen, toggleFullscreenMap]);
+  }, [
+    gameState,
+    isAiStudioOpen,
+    isAntigravityOpen,
+    isDriveOpen,
+    isPinboardOpen,
+    isTvOpen,
+    toggleFullscreenMap,
+  ]);
 
   const handleStartGame = () => {
     soundEngine.playInteract();
@@ -456,6 +610,15 @@ export default function App() {
   );
 
   const handleAntigravityProximityEvent = useCallback(
+    (event: 'approached' | 'returning') => {
+      if (event === 'approached') {
+        soundEngine.playEnterOffice();
+      }
+    },
+    []
+  );
+
+  const handleAiStudioProximityEvent = useCallback(
     (event: 'approached' | 'returning') => {
       if (event === 'approached') {
         soundEngine.playEnterOffice();
@@ -624,6 +787,12 @@ export default function App() {
         return;
       }
 
+      if (id === 'ai_studio_desk') {
+        soundEngine.playEnterOffice();
+        setIsAiStudioOpen(true);
+        return;
+      }
+
       if (isDiningChairSeatId(id)) {
         soundEngine.playInteract();
         const seatPositionLabel: Record<typeof id, string> = {
@@ -760,9 +929,18 @@ export default function App() {
         },
       ]);
 
+      const latestUserMessage = [...historyToSend].reverse().find((m) => m.role === 'user');
+      const taskSummary = summarizeMinaTask(latestUserMessage?.content ?? '', mode);
+
       setIsStreaming(true);
       setApiError(null);
       setAssistantMood('thinking');
+      handleUpdateCharacterActivity('mina', {
+        busy: true,
+        taskLabel: taskSummary,
+        errorReason: null,
+        errorCode: null,
+      });
 
       let accumulated = '';
       let receivedProposal = false;
@@ -820,7 +998,7 @@ export default function App() {
             if (!dataLine) continue;
 
             const parsed = JSON.parse(dataLine.slice(6)) as {
-              type: 'chunk' | 'done' | 'error' | 'task_proposal';
+              type: 'chunk' | 'done' | 'error' | 'task_proposal' | 'usage';
               text?: string;
               error?: string;
               task?: { title: string; notes?: string; dueDate?: string };
@@ -828,6 +1006,11 @@ export default function App() {
 
             if (parsed.type === 'error') {
               throw new Error(parsed.error || 'เกิดข้อผิดพลาดระหว่างรับคำตอบจาก Gemini API');
+            }
+
+            if (parsed.type === 'usage') {
+              void fetchCharacterStatuses();
+              continue;
             }
 
             if (parsed.type === 'task_proposal' && parsed.task?.title) {
@@ -867,6 +1050,12 @@ export default function App() {
 
         soundEngine.playMessageReceived();
         setAssistantMood('speaking');
+        handleUpdateCharacterActivity('mina', {
+          busy: false,
+          taskLabel: null,
+          errorReason: null,
+          errorCode: null,
+        });
         if (receivedProposal) {
           showMinaBubble('เตรียมงานแล้ว กดยืนยันได้เลยครับ!', 5000);
         } else {
@@ -881,6 +1070,10 @@ export default function App() {
         }, 3500);
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
+          handleUpdateCharacterActivity('mina', {
+            busy: false,
+            taskLabel: null,
+          });
           return;
         }
         const message =
@@ -889,6 +1082,11 @@ export default function App() {
             : 'เกิดข้อผิดพลาดในการเชื่อมต่อ Gemini API';
         setApiError(message);
         setAssistantMood('idle');
+        handleUpdateCharacterActivity('mina', {
+          busy: false,
+          taskLabel: null,
+          errorReason: message,
+        });
         // Remove empty placeholder assistant message on error
         setMessages((prev) =>
           prev.filter(
@@ -897,9 +1095,10 @@ export default function App() {
         );
       } finally {
         setIsStreaming(false);
+        void fetchCharacterStatuses();
       }
     },
-    [showMinaBubble, timeOfDay]
+    [fetchCharacterStatuses, handleUpdateCharacterActivity, showMinaBubble, timeOfDay]
   );
 
   const handleConfirmChatTask = useCallback(
@@ -1250,7 +1449,15 @@ export default function App() {
                   isTvOn={isTvOpen}
                   isDriveOpen={isDriveOpen}
                   isAntigravityOpen={isAntigravityOpen}
-                  isModalOpen={isTvOpen || isPinboardOpen || isDriveOpen || isAntigravityOpen}
+                  isAiStudioOpen={isAiStudioOpen}
+                  characterStatuses={characterStatuses}
+                  isModalOpen={
+                    isTvOpen ||
+                    isPinboardOpen ||
+                    isDriveOpen ||
+                    isAntigravityOpen ||
+                    isAiStudioOpen
+                  }
                   isFullscreenMap={isFullscreenMap}
                   onZoneChange={handleZoneChange}
                   onNearestChange={setNearestInteractable}
@@ -1262,11 +1469,18 @@ export default function App() {
                   onMinaMissionEvent={handleMinaMissionEvent}
                   onMinaProximityEvent={handleMinaProximityEvent}
                   onAntigravityProximityEvent={handleAntigravityProximityEvent}
+                  onAiStudioProximityEvent={handleAiStudioProximityEvent}
                   onCameraChange={setCameraUi}
                 />
 
                 {/* Minimal 2-button floating chooser when clicking Mina at her computer desk */}
-                {minaActionMenu && !isWorking && !isTvOpen && !isPinboardOpen && !isDriveOpen && (
+                {minaActionMenu &&
+                  !isWorking &&
+                  !isTvOpen &&
+                  !isPinboardOpen &&
+                  !isDriveOpen &&
+                  !isAntigravityOpen &&
+                  !isAiStudioOpen && (
                   <div
                     role="menu"
                     aria-label="เลือกวิธีเริ่มสนทนากับมีน่า"
@@ -1345,7 +1559,7 @@ export default function App() {
                         : zone === 'living'
                           ? 'นั่งพักบนโซฟา ดูทีวี YouTube หรือเดินลงด้านล่างเข้าห้องครัว'
                           : zone === 'office'
-                            ? 'ห้องทำงานส่วนตัว — นั่งหน้าคอมพิวเตอร์ จัดการเอกสาร หรือคุยงานกับมีน่า'
+                            ? 'ห้องทำงาน — เดินเข้าใกล้ มีน่า, Antigravity หรือ Google AI Studio เพื่อดูสถานะและเริ่มคุยงาน'
                             : zone === 'kitchen'
                               ? 'ห้องครัวครอบครัว — นั่งเก้าอี้โต๊ะอาหารทั้ง 4 ตัว ฉลองมื้อไก่งวงคริสต์มาสวันครอบครัวอบอุ่น'
                               : 'ห้องน้ำและห้องอาบน้ำ — วางเมาส์ค้างบนสิ่งของประมาณ 2 วินาที เพื่อดูชื่อและรายละเอียด'}
@@ -1474,7 +1688,7 @@ export default function App() {
                   <strong className="text-[#FAF6F0]">ปุ่ม E หรือคลิกสิ่งของ:</strong> โต้ตอบกาแฟ โซฟา ทีวี (YouTube) กระดานโน้ต (Google Tasks) โต๊ะเอกสารกลางห้อง (Google Drive) หน้าต่าง หรือชั้นหนังสือ
                 </li>
                 <li>
-                  <strong className="text-[#FAF6F0]">คุยงานกับมีน่า (AI):</strong> คลิกที่มีน่าขณะนั่งทำงานที่โต๊ะเพื่อเลือกให้เดินมาหาก่อนหรือเริ่มแชททันที หรือเดินเข้ารัศมีรอบโต๊ะเพื่อคุยได้เลย
+                  <strong className="text-[#FAF6F0]">ทีม AI ในห้องทำงาน (มีน่า / Antigravity / Google AI Studio):</strong> เดินเข้าใกล้รัศมีตัวละครเพื่อดูป้ายสถานะ Token, งานที่กำลังทำ หรือเหตุผลเมื่อใช้งานไม่ได้ แล้วกด E หรือคลิกที่โต๊ะเพื่อเปิดใช้งาน
                 </li>
                 <li>
                   <strong className="text-[#FAF6F0]">ซูมและเลือกจุดโฟกัสกล้อง:</strong> หมุนลูกกลิ้งเมาส์ (หรือปุ่ม +/-) เพื่อซูม, ลากบนแผนที่หรือคลิกขวาเพื่อเลือกจุดโฟกัสเอง, กด 0 ดูทั้งบ้าน, กด F แสดงแมพทั้งแมพแบบเต็มจอ หรือกด C เพื่อกลับมาตามตัวละคร
@@ -1579,14 +1793,36 @@ export default function App() {
           }}
         />
       )}
-      {isAntigravityOpen && (
-        <AntigravityModal
-          onClose={() => {
-            soundEngine.playInteract();
-            setIsAntigravityOpen(false);
-          }}
-        />
-      )}
+      <AntigravityModal
+        isOpen={isAntigravityOpen}
+        statusSnapshot={characterStatuses.antigravity}
+        onTaskActivityChange={(activity) =>
+          handleUpdateCharacterActivity('antigravity', activity)
+        }
+        onBackgroundComplete={(taskSummary) => {
+          showToast(`Antigravity ทำงานเสร็จแล้ว: ${taskSummary}`, 'house');
+        }}
+        onRefreshStatus={() => void fetchCharacterStatuses()}
+        onClose={() => {
+          soundEngine.playInteract();
+          setIsAntigravityOpen(false);
+        }}
+      />
+      <AiStudioModal
+        isOpen={isAiStudioOpen}
+        statusSnapshot={characterStatuses.ai_studio}
+        onTaskActivityChange={(activity) =>
+          handleUpdateCharacterActivity('ai_studio', activity)
+        }
+        onBackgroundComplete={(taskSummary) => {
+          showToast(`Google AI Studio ทำงานเสร็จแล้ว: ${taskSummary}`, 'house');
+        }}
+        onRefreshStatus={() => void fetchCharacterStatuses()}
+        onClose={() => {
+          soundEngine.playInteract();
+          setIsAiStudioOpen(false);
+        }}
+      />
     </div>
   );
 }

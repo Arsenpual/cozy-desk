@@ -5,6 +5,7 @@ import type {
   CameraFocusMode,
   CameraPresetId,
   CameraUiState,
+  CharacterStatusMap,
   GameState,
   InspectableObject,
   InspectHoverRenderState,
@@ -26,6 +27,10 @@ import {
   AGY_LEAVE_RADIUS,
   AGY_POS,
   AGY_STAND_POS,
+  AISTUDIO_APPROACH_RADIUS,
+  AISTUDIO_LEAVE_RADIUS,
+  AISTUDIO_POS,
+  AISTUDIO_STAND_POS,
   CAMERA_BASE_SCALE,
   CAMERA_DEFAULT_ZOOM,
   CAMERA_MAX_ZOOM,
@@ -81,6 +86,8 @@ interface GameCanvasProps {
   isTvOn: boolean;
   isDriveOpen: boolean;
   isAntigravityOpen?: boolean;
+  isAiStudioOpen?: boolean;
+  characterStatuses?: CharacterStatusMap;
   isModalOpen: boolean;
   isFullscreenMap?: boolean;
   onZoneChange: (zone: RoomZone) => void;
@@ -93,6 +100,7 @@ interface GameCanvasProps {
   onMinaMissionEvent?: (event: 'started' | 'pinned' | 'returned', taskTitle: string) => void;
   onMinaProximityEvent?: (event: 'approached' | 'returning') => void;
   onAntigravityProximityEvent?: (event: 'approached' | 'returning') => void;
+  onAiStudioProximityEvent?: (event: 'approached' | 'returning') => void;
   onCameraChange?: (cameraState: CameraUiState) => void;
 }
 
@@ -203,6 +211,7 @@ const INSPECT_REVEAL_DELAY = 2.0; // seconds of hover dwell to reveal object too
 
 const MINA_DESK_INTERACTABLE = INTERACTABLES.find((i) => i.id === 'mina_desk') ?? null;
 const AGY_DESK_INTERACTABLE = INTERACTABLES.find((i) => i.id === 'antigravity_desk') ?? null;
+const AISTUDIO_DESK_INTERACTABLE = INTERACTABLES.find((i) => i.id === 'ai_studio_desk') ?? null;
 
 const ALL_SOFA_ACTIVITIES: SofaActivity[] = ['tea', 'newspaper', 'tv_remote'];
 
@@ -267,15 +276,26 @@ function isPlayerInsideAgyRadius(player: PlayerState, isAlreadyEngaged: boolean)
   return false;
 }
 
+function isPlayerInsideAiStudioRadius(player: PlayerState, isAlreadyEngaged: boolean): boolean {
+  if (getRoomZone(player.x, player.y) !== 'office') return false;
+  const distToStudio = Math.hypot(player.x - AISTUDIO_POS.x, player.y - AISTUDIO_POS.y);
+  if (distToStudio <= AISTUDIO_APPROACH_RADIUS) return true;
+  if (isAlreadyEngaged && distToStudio <= AISTUDIO_LEAVE_RADIUS) return true;
+  return false;
+}
+
 function getEffectiveNearestInteractable(
   player: PlayerState,
   mina: MinaNpcState,
-  isAgyEngaged = false
+  isAgyEngaged = false,
+  isAiStudioEngaged = false
 ): InteractableObject | null {
   const staticNearest = findNearestInteractable(player.x, player.y);
-  // Strictly gate access to Mina ('mina_desk') and Antigravity ('antigravity_desk') to their proximity radii
+  // Strictly gate access to AI characters to their proximity radii
   const filteredStatic =
-    staticNearest?.id === 'mina_desk' || staticNearest?.id === 'antigravity_desk'
+    staticNearest?.id === 'mina_desk' ||
+    staticNearest?.id === 'antigravity_desk' ||
+    staticNearest?.id === 'ai_studio_desk'
       ? null
       : staticNearest;
 
@@ -297,6 +317,10 @@ function getEffectiveNearestInteractable(
     return AGY_DESK_INTERACTABLE;
   }
 
+  if (AISTUDIO_DESK_INTERACTABLE && isPlayerInsideAiStudioRadius(player, isAiStudioEngaged)) {
+    return AISTUDIO_DESK_INTERACTABLE;
+  }
+
   return filteredStatic;
 }
 
@@ -314,6 +338,8 @@ export function GameCanvas({
   isTvOn,
   isDriveOpen,
   isAntigravityOpen = false,
+  isAiStudioOpen = false,
+  characterStatuses,
   isModalOpen,
   isFullscreenMap = false,
   onZoneChange,
@@ -326,6 +352,7 @@ export function GameCanvas({
   onMinaMissionEvent,
   onMinaProximityEvent,
   onAntigravityProximityEvent,
+  onAiStudioProximityEvent,
   onCameraChange,
 }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -406,6 +433,7 @@ export function GameCanvas({
   const currentZoneRef = useRef<RoomZone>('living');
   const nearestKeyRef = useRef<string | null>(null);
   const agyEngagedRef = useRef(false);
+  const aiStudioEngagedRef = useRef(false);
 
   // Smooth 2D camera state (follows player dead-center by default; user can pan, zoom, or pick room focus)
   const cameraRef = useRef<CameraInternalState>({
@@ -468,6 +496,8 @@ export function GameCanvas({
     isTvOn,
     isDriveOpen,
     isAntigravityOpen,
+    isAiStudioOpen,
+    characterStatuses,
     isModalOpen,
     isFullscreenMap,
     onZoneChange,
@@ -480,6 +510,7 @@ export function GameCanvas({
     onMinaMissionEvent,
     onMinaProximityEvent,
     onAntigravityProximityEvent,
+    onAiStudioProximityEvent,
     onCameraChange,
   });
   propsRef.current = {
@@ -493,6 +524,8 @@ export function GameCanvas({
     isTvOn,
     isDriveOpen,
     isAntigravityOpen,
+    isAiStudioOpen,
+    characterStatuses,
     isModalOpen,
     isFullscreenMap,
     onZoneChange,
@@ -505,6 +538,7 @@ export function GameCanvas({
     onMinaMissionEvent,
     onMinaProximityEvent,
     onAntigravityProximityEvent,
+    onAiStudioProximityEvent,
     onCameraChange,
   };
 
@@ -917,7 +951,8 @@ export function GameCanvas({
         const nearest = getEffectiveNearestInteractable(
           playerRef.current,
           minaRef.current,
-          agyEngagedRef.current
+          agyEngagedRef.current,
+          aiStudioEngagedRef.current
         );
         if (nearest) {
           e.preventDefault();
@@ -1067,7 +1102,12 @@ export function GameCanvas({
           if (!moved && waypointsRef.current.length > 0) {
             waypointsRef.current = [];
             if (pendingInteractRef.current) {
-              const nearest = getEffectiveNearestInteractable(player, mina, agyEngagedRef.current);
+              const nearest = getEffectiveNearestInteractable(
+                player,
+                mina,
+                agyEngagedRef.current,
+                aiStudioEngagedRef.current
+              );
               if (nearest && nearest.id === pendingInteractRef.current) {
                 propsRef.current.onInteract(pendingInteractRef.current);
               }
@@ -1508,7 +1548,7 @@ export function GameCanvas({
         }
       }
 
-      // Autonomous Antigravity proximity tracking (same tight-radius engagement & leave hysteresis as Mina)
+      // Autonomous Antigravity & Google AI Studio proximity tracking
       if (!modalOpen) {
         const nextAgyEngaged = isPlayerInsideAgyRadius(player, agyEngagedRef.current);
         if (nextAgyEngaged !== agyEngagedRef.current) {
@@ -1519,13 +1559,31 @@ export function GameCanvas({
             );
           }
         }
+
+        const nextAiStudioEngaged = isPlayerInsideAiStudioRadius(
+          player,
+          aiStudioEngagedRef.current
+        );
+        if (nextAiStudioEngaged !== aiStudioEngagedRef.current) {
+          aiStudioEngagedRef.current = nextAiStudioEngaged;
+          if (state === 'PLAYING') {
+            propsRef.current.onAiStudioProximityEvent?.(
+              nextAiStudioEngaged ? 'approached' : 'returning'
+            );
+          }
+        }
       }
 
       // Nearest interactable detection (hidden while seated; standing up clears seat)
       if (state === 'PLAYING' && !modalOpen) {
         const nearest = player.isSitting
           ? null
-          : getEffectiveNearestInteractable(player, mina, agyEngagedRef.current);
+          : getEffectiveNearestInteractable(
+              player,
+              mina,
+              agyEngagedRef.current,
+              aiStudioEngagedRef.current
+            );
         const nextKey = nearest ? `${nearest.id}:${nearest.label}` : null;
         if (nextKey !== nearestKeyRef.current) {
           nearestKeyRef.current = nextKey;
@@ -1673,7 +1731,12 @@ export function GameCanvas({
       if (ctx) {
         const nearest =
           state === 'PLAYING' && !modalOpen && !player.isSitting
-            ? getEffectiveNearestInteractable(player, mina, agyEngagedRef.current)
+            ? getEffectiveNearestInteractable(
+                player,
+                mina,
+                agyEngagedRef.current,
+                aiStudioEngagedRef.current
+              )
             : null;
         renderHouseScene(ctx, {
           player,
@@ -1690,6 +1753,8 @@ export function GameCanvas({
           isTvOn: tvOn,
           isDriveOpen: propsRef.current.isDriveOpen,
           isAntigravityOpen: propsRef.current.isAntigravityOpen,
+          isAiStudioOpen: propsRef.current.isAiStudioOpen,
+          characterStatuses: propsRef.current.characterStatuses,
           camera: { x: cam.x, y: cam.y, zoom: cam.zoom },
           inspectHover,
           viewW: vp.viewW,
@@ -1864,12 +1929,13 @@ export function GameCanvas({
 
     const clickedObj = getInteractableAtPoint(wx, wy);
 
-    // Allow clicking the office cork pinboard, central Drive table, or Antigravity station directly while conversing
+    // Allow clicking office stations directly while conversing with Mina
     if (propsRef.current.gameState === 'WORKING') {
       if (
         clickedObj?.id === 'pinboard' ||
         clickedObj?.id === 'drive_table' ||
-        clickedObj?.id === 'antigravity_desk'
+        clickedObj?.id === 'antigravity_desk' ||
+        clickedObj?.id === 'ai_studio_desk'
       ) {
         propsRef.current.onInteract(clickedObj.id);
       }
@@ -1973,6 +2039,20 @@ export function GameCanvas({
       waypointsRef.current = path;
       pendingInteractRef.current = 'antigravity_desk';
       clickMarkerRef.current = { x: AGY_STAND_POS.x, y: AGY_STAND_POS.y, ttl: 35 };
+      return;
+    }
+
+    // Clicking Google AI Studio station or NPC sprite: open only if inside tight radius, else walk up to AISTUDIO_STAND_POS
+    const clickedAiStudio = Math.hypot(wx - AISTUDIO_POS.x, wy - (AISTUDIO_POS.y - 8)) <= 24;
+    if (clickedAiStudio || clickedObj?.id === 'ai_studio_desk') {
+      if (isPlayerInsideAiStudioRadius(player, aiStudioEngagedRef.current)) {
+        propsRef.current.onInteract('ai_studio_desk');
+        return;
+      }
+      const path = findWalkablePath(player.x, player.y, AISTUDIO_STAND_POS.x, AISTUDIO_STAND_POS.y);
+      waypointsRef.current = path;
+      pendingInteractRef.current = 'ai_studio_desk';
+      clickMarkerRef.current = { x: AISTUDIO_STAND_POS.x, y: AISTUDIO_STAND_POS.y, ttl: 35 };
       return;
     }
 

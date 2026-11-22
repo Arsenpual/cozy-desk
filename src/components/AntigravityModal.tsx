@@ -7,6 +7,7 @@ import {
   FileCode2,
   FolderGit2,
   Loader2,
+  Minimize2,
   RotateCcw,
   Send,
   Server,
@@ -16,7 +17,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { AntigravityMessage, AntigravityMode } from '../types/game';
+import type {
+  AntigravityMessage,
+  AntigravityMode,
+  CharacterStatusSnapshot,
+} from '../types/game';
+import type { CharacterTaskActivityUpdate } from './AiStudioModal';
 import { soundEngine } from '../utils/sound';
 
 const STORAGE_AGY_MESSAGES_KEY = 'cozy_desk_antigravity_messages_v1';
@@ -35,7 +41,12 @@ interface AntigravityStatus {
 }
 
 interface AntigravityModalProps {
+  isOpen: boolean;
+  statusSnapshot?: CharacterStatusSnapshot;
   onClose: () => void;
+  onTaskActivityChange?: (activity: CharacterTaskActivityUpdate) => void;
+  onBackgroundComplete?: (taskSummary: string) => void;
+  onRefreshStatus?: () => void;
 }
 
 const AGY_MODES: Array<{
@@ -91,7 +102,39 @@ function loadSavedMessages(): AntigravityMessage[] {
   }
 }
 
-export function AntigravityModal({ onClose }: AntigravityModalProps) {
+function formatCompactTokens(n: number): string {
+  const safe = Math.max(0, Math.round(n));
+  if (safe >= 1_000_000) {
+    const m = safe / 1_000_000;
+    return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (safe >= 1_000) {
+    const k = safe / 1_000;
+    return `${k >= 100 || k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+  }
+  return String(safe);
+}
+
+function formatResetTime(resetAtMs: number): string {
+  const d = new Date(resetAtMs);
+  if (Number.isNaN(d.getTime())) return '--:-- น.';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} น.`;
+}
+
+function summarizePrompt(raw: string, fallback: string): string {
+  const cleaned = raw.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return fallback;
+  return cleaned.length > 42 ? `${cleaned.slice(0, 42)}…` : cleaned;
+}
+
+export function AntigravityModal({
+  isOpen,
+  statusSnapshot,
+  onClose,
+  onTaskActivityChange,
+  onBackgroundComplete,
+  onRefreshStatus,
+}: AntigravityModalProps) {
   const [mode, setMode] = useState<AntigravityMode>('code');
   const [messages, setMessages] = useState<AntigravityMessage[]>(loadSavedMessages);
   const [input, setInput] = useState('');
@@ -112,6 +155,19 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+
+  const callbacksRef = useRef({
+    onTaskActivityChange,
+    onBackgroundComplete,
+    onRefreshStatus,
+  });
+  callbacksRef.current = {
+    onTaskActivityChange,
+    onBackgroundComplete,
+    onRefreshStatus,
+  };
 
   const currentModeConfig = AGY_MODES.find((m) => m.id === mode) ?? AGY_MODES[0];
 
@@ -143,12 +199,16 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
   }, [messages]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isStreaming]);
+    if (isOpen) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [isOpen, messages, isStreaming]);
 
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, [mode]);
+    if (isOpen) {
+      textareaRef.current?.focus();
+    }
+  }, [isOpen, mode]);
 
   const toggleFocusFile = (filePath: string) => {
     soundEngine.playInteract();
@@ -184,7 +244,25 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
       setIsStreaming(true);
       setError(null);
 
+      const latestPrompt =
+        [...historyToSend].reverse().find((m) => m.role === 'user')?.content ?? '';
+      const taskSummary = summarizePrompt(
+        latestPrompt,
+        activeMode === 'workspace'
+          ? 'สำรวจไฟล์โปรเจกต์'
+          : activeMode === 'arch'
+            ? 'วิเคราะห์สถาปัตยกรรม'
+            : 'ตรวจโค้ด & แก้บัค'
+      );
+      callbacksRef.current.onTaskActivityChange?.({
+        busy: true,
+        taskLabel: taskSummary,
+        errorReason: null,
+        errorCode: null,
+      });
+
       let accumulated = '';
+      let succeeded = false;
       const targetEndpoint = customEndpoint.trim() || DEFAULT_LOCAL_ENDPOINT;
 
       try {
@@ -234,7 +312,7 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
             if (!dataLine) continue;
 
             const parsed = JSON.parse(dataLine.slice(6)) as {
-              type: 'chunk' | 'done' | 'error' | 'inspected_files';
+              type: 'chunk' | 'done' | 'error' | 'inspected_files' | 'usage';
               text?: string;
               error?: string;
               files?: string[];
@@ -242,6 +320,10 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
 
             if (parsed.type === 'error') {
               throw new Error(parsed.error || 'เกิดข้อผิดพลาดจาก Antigravity Localhost Agent');
+            }
+
+            if (parsed.type === 'usage') {
+              callbacksRef.current.onRefreshStatus?.();
             }
 
             if (parsed.type === 'inspected_files' && Array.isArray(parsed.files)) {
@@ -268,9 +350,25 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
           throw new Error('ไม่ได้รับข้อความตอบกลับจาก Antigravity กรุณาลองส่งใหม่อีกครั้ง');
         }
 
+        succeeded = true;
         soundEngine.playMessageReceived();
+        callbacksRef.current.onTaskActivityChange?.({
+          busy: false,
+          taskLabel: null,
+          errorReason: null,
+          errorCode: null,
+        });
+        if (!isOpenRef.current) {
+          callbacksRef.current.onBackgroundComplete?.(taskSummary);
+        }
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
+        if ((err as { name?: string })?.name === 'AbortError') {
+          callbacksRef.current.onTaskActivityChange?.({
+            busy: false,
+            taskLabel: null,
+            errorReason: null,
+            errorCode: null,
+          });
           return;
         }
         const msg =
@@ -279,8 +377,17 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
         setMessages((prev) =>
           prev.filter((m) => !(m.id === assistantMsgId && m.content === ''))
         );
+        callbacksRef.current.onTaskActivityChange?.({
+          busy: false,
+          taskLabel: null,
+          errorReason: msg,
+          errorCode: null,
+        });
       } finally {
         setIsStreaming(false);
+        if (succeeded || !controller.signal.aborted) {
+          callbacksRef.current.onRefreshStatus?.();
+        }
       }
     },
     [customEndpoint]
@@ -345,6 +452,10 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
     'package.json',
   ]).slice(0, 14);
 
+  if (!isOpen) {
+    return null;
+  }
+
   return (
     <div
       role="dialog"
@@ -376,12 +487,45 @@ export function AntigravityModal({ onClose }: AntigravityModalProps) {
                 </span>
               </div>
               <p className="text-xs text-[#94A3B8]">
-                ตัวละครผู้ช่วยสายโค้ดดิ้ง & สำรวจไฟล์โปรเจกต์บนเครื่อง Localhost แบบปลอดภัย (Read-Only Sandbox)
+                {statusSnapshot ? (
+                  statusSnapshot.status === 'unavailable' ? (
+                    <span className="font-medium text-[#FCA5A5]">
+                      ใช้งานไม่ได้ ({statusSnapshot.unavailableReason || 'ระบบไม่พร้อม'})
+                    </span>
+                  ) : statusSnapshot.status === 'busy' ? (
+                    <span className="font-medium text-[#FDE68A]">
+                      กำลังทำงาน: {statusSnapshot.currentTask || 'ประมวลผลคำสั่ง'}
+                    </span>
+                  ) : (
+                    <span className="tabular-nums text-[#7DD3FC]">
+                      เหลือ {formatCompactTokens(statusSnapshot.tokensRemaining)}/
+                      {formatCompactTokens(statusSnapshot.tokensLimit)} Token · รีเซ็ต{' '}
+                      {formatResetTime(statusSnapshot.resetAt)}
+                    </span>
+                  )
+                ) : (
+                  'ตัวละครผู้ช่วยสายโค้ดดิ้ง & สำรวจไฟล์โปรเจกต์บนเครื่อง Localhost แบบปลอดภัย (Read-Only Sandbox)'
+                )}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {isStreaming && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playInteract();
+                  onClose();
+                }}
+                title="พับหน้าต่างเพื่อดูตัวละครทำงานบนแผนที่ห้องทำงาน"
+                className="inline-flex h-8 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#F59E0B]/50 bg-[#2C2012] px-2.5 text-xs font-medium text-[#FDE68A] transition-colors hover:border-[#F59E0B] hover:bg-[#3A2A15]"
+              >
+                <Minimize2 className="h-3.5 w-3.5 shrink-0" />
+                <span>พับดูตัวละคร</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => {

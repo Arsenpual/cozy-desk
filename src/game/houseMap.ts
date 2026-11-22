@@ -190,6 +190,22 @@ export const AGY_STAND_POS = {
   y: 10.6 * TILE,
 };
 
+// Google AI Studio Lab Station & character position (south-center bay of expanded Home Office)
+export const AISTUDIO_DESK_RECT: Rect = {
+  x: 15.6 * TILE,
+  y: 10.75 * TILE,
+  w: 2.55 * TILE,
+  h: 1.05 * TILE,
+};
+export const AISTUDIO_POS = {
+  x: 16.88 * TILE,
+  y: 10.38 * TILE,
+};
+export const AISTUDIO_STAND_POS = {
+  x: 16.88 * TILE,
+  y: 9.82 * TILE,
+};
+
 // Tight proximity thresholds around Mina's desk (must be inside radius to access Mina)
 export const MINA_APPROACH_RADIUS = 52;
 export const MINA_LEAVE_RADIUS = 64;
@@ -199,6 +215,10 @@ export const MINA_GREET_STOP_DIST = 28;
 // Tight proximity thresholds around Antigravity's localhost station (must be inside radius to engage & access)
 export const AGY_APPROACH_RADIUS = 52;
 export const AGY_LEAVE_RADIUS = 64;
+
+// Tight proximity thresholds around Google AI Studio's lab station (clear separation from Antigravity & Mina)
+export const AISTUDIO_APPROACH_RADIUS = 52;
+export const AISTUDIO_LEAVE_RADIUS = 64;
 
 // Clear walkable route to stand directly in front of the unobstructed north-west Office Pinboard
 export const MINA_AISLE_X = 19.65 * TILE;
@@ -287,6 +307,7 @@ export const COLLIDERS: Rect[] = [
   { x: 21.45 * TILE, y: 9.55 * TILE, w: 1.4 * TILE, h: 1.4 * TILE }, // Rolling filing cabinet & binders
   { x: 19.35 * TILE, y: 10.75 * TILE, w: 0.85 * TILE, h: 0.95 * TILE }, // South-east office potted monstera plant
   { x: 11.15 * TILE, y: 9.75 * TILE, w: 1.48 * TILE, h: 1.8 * TILE }, // Antigravity localhost terminal desk (south-west tech zone)
+  { ...AISTUDIO_DESK_RECT }, // Google AI Studio Prompt Lab & App Builder desk (south-center bay)
 
   // Lower-Left Room: Family Kitchen & Dining furniture
   { x: 1.12 * TILE, y: 13.75 * TILE, w: 1.38 * TILE, h: 1.45 * TILE }, // Double-door refrigerator
@@ -435,6 +456,17 @@ export const INTERACTABLES: InteractableObject[] = [
     y: 9.65 * TILE,
     w: 2.35 * TILE,
     h: 1.95 * TILE,
+    interactRadius: 76,
+  },
+  {
+    id: 'ai_studio_desk',
+    zone: 'office',
+    label: 'Google AI Studio',
+    actionLabel: 'เปิดเวิร์กเบนช์ AI Studio',
+    x: AISTUDIO_DESK_RECT.x,
+    y: AISTUDIO_DESK_RECT.y - 0.65 * TILE,
+    w: AISTUDIO_DESK_RECT.w,
+    h: AISTUDIO_DESK_RECT.h + 0.65 * TILE,
     interactRadius: 76,
   },
   {
