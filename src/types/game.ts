@@ -177,6 +177,7 @@ export interface GoogleTask {
   due?: string;
   status: 'needsAction' | 'completed';
   updated?: string;
+  parent?: string;
 }
 
 export interface TvFeedItem {

@@ -58,6 +58,7 @@ import {
   createTask,
   fetchAllTaskListsWithTasks,
   GoogleTasksApiError,
+  type GoogleTaskListWithTasks,
 } from './utils/tasksApi';
 import {
   clearYouTubeAccessToken,
@@ -253,6 +254,9 @@ export default function App() {
   const [youtubeToken, setYoutubeToken] = useState<string | null>(null);
   const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
   const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
+  const [syncedTaskLists, setSyncedTaskLists] = useState<GoogleTaskListWithTasks[] | null>(null);
+  const [isSyncingTasks, setIsSyncingTasks] = useState(false);
+  const [tasksSyncError, setTasksSyncError] = useState<string | null>(null);
 
   // Workspace state persisted in localStorage
   const [workMode, setWorkMode] = useState<WorkMode>('qa');
@@ -900,7 +904,70 @@ export default function App() {
   const handleYouTubeTokenExpired = useCallback(() => {
     clearYouTubeAccessToken();
     setYoutubeToken(null);
+    setSyncedTaskLists(null);
+    setTasksSyncError(null);
   }, []);
+
+  const syncGoogleTasksForMina = useCallback(
+    async (tokenOverride?: string | null): Promise<GoogleTaskListWithTasks[] | null> => {
+      const token = tokenOverride ?? youtubeToken;
+      if (!token) {
+        setSyncedTaskLists(null);
+        setTasksSyncError(null);
+        return null;
+      }
+      setIsSyncingTasks(true);
+      setTasksSyncError(null);
+      try {
+        const lists = await fetchAllTaskListsWithTasks(token);
+        setSyncedTaskLists(lists);
+        return lists;
+      } catch (err) {
+        if (err instanceof GoogleTasksApiError && (err.status === 401 || err.status === 403)) {
+          handleYouTubeTokenExpired();
+          setTasksSyncError('สิทธิ์ Google Tasks หมดอายุ กรุณาเข้าสู่ระบบใหม่');
+        } else {
+          setTasksSyncError(
+            err instanceof Error ? err.message : 'ดึงข้อมูล Google Tasks ไม่สำเร็จชั่วคราว'
+          );
+        }
+        return null;
+      } finally {
+        setIsSyncingTasks(false);
+      }
+    },
+    [handleYouTubeTokenExpired, youtubeToken]
+  );
+
+  // Auto-sync Google Tasks whenever signed in or opening Mina's Workspace
+  useEffect(() => {
+    if (!youtubeToken) {
+      setSyncedTaskLists(null);
+      setTasksSyncError(null);
+      return;
+    }
+    if (gameState === 'WORKING' || !syncedTaskLists) {
+      void syncGoogleTasksForMina(youtubeToken);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeToken, gameState]);
+
+  const minaTasksSummary = useMemo(() => {
+    if (!syncedTaskLists) return null;
+    let pendingCount = 0;
+    let completedCount = 0;
+    for (const list of syncedTaskLists) {
+      for (const task of list.tasks) {
+        if (task.status === 'completed') completedCount += 1;
+        else pendingCount += 1;
+      }
+    }
+    return {
+      listCount: syncedTaskLists.length,
+      pendingCount,
+      completedCount,
+    };
+  }, [syncedTaskLists]);
 
   const handleToggleWorkspace = () => {
     if (gameState !== 'WORKING') return;
@@ -953,7 +1020,7 @@ export default function App() {
       const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
       type TasksContextPayload =
-        | { status: 'not_signed_in' | 'auth_expired' | 'unavailable' }
+        | { status: 'not_signed_in' | 'auth_expired' | 'unavailable'; errorDetail?: string }
         | {
             status: 'connected';
             lists: Array<{
@@ -965,56 +1032,79 @@ export default function App() {
                 status: 'needsAction' | 'completed';
                 due?: string;
                 notes?: string;
+                updated?: string;
+                parent?: string;
               }>;
             }>;
           };
 
-      let tasksContext: TasksContextPayload = { status: 'not_signed_in' };
-      if (youtubeToken) {
-        let timeoutId: number | undefined;
-        try {
-          const listsWithTasks = await Promise.race([
-            fetchAllTaskListsWithTasks(youtubeToken),
-            new Promise<never>((_, reject) => {
-              timeoutId = window.setTimeout(() => reject(new Error('TASKS_TIMEOUT')), 4000);
-            }),
-          ]);
-          tasksContext = {
-            status: 'connected',
-            lists: listsWithTasks.map((list) => ({
-              id: list.id,
-              title: list.title,
-              tasks: list.tasks.map((t) => ({
-                id: t.id,
-                title: t.title,
-                status: t.status,
-                ...(t.due ? { due: t.due } : {}),
-                ...(t.notes ? { notes: t.notes } : {}),
-              })),
-            })),
-          };
-        } catch (err) {
-          if (err instanceof GoogleTasksApiError && (err.status === 401 || err.status === 403)) {
-            handleYouTubeTokenExpired();
-            tasksContext = { status: 'auth_expired' };
-          } else {
-            tasksContext = { status: 'unavailable' };
-          }
-        } finally {
-          if (timeoutId !== undefined) {
-            window.clearTimeout(timeoutId);
-          }
-        }
-      }
-
-      if (controller.signal.aborted) {
-        return;
-      }
+      const serializeLists = (
+        lists: GoogleTaskListWithTasks[]
+      ): Extract<TasksContextPayload, { status: 'connected' }> => ({
+        status: 'connected',
+        lists: lists.map((list) => ({
+          id: list.id,
+          title: list.title,
+          tasks: list.tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            ...(t.due ? { due: t.due } : {}),
+            ...(t.notes ? { notes: t.notes } : {}),
+            ...(t.updated ? { updated: t.updated } : {}),
+            ...(t.parent ? { parent: t.parent } : {}),
+          })),
+        })),
+      });
 
       try {
+        let tasksContext: TasksContextPayload = { status: 'not_signed_in' };
+        if (youtubeToken) {
+          let timeoutId: number | undefined;
+          try {
+            const listsWithTasks = await Promise.race([
+              fetchAllTaskListsWithTasks(youtubeToken),
+              new Promise<never>((_, reject) => {
+                timeoutId = window.setTimeout(() => reject(new Error('TASKS_TIMEOUT')), 10_000);
+              }),
+            ]);
+            setSyncedTaskLists(listsWithTasks);
+            setTasksSyncError(null);
+            tasksContext = serializeLists(listsWithTasks);
+          } catch (err) {
+            if (err instanceof GoogleTasksApiError && (err.status === 401 || err.status === 403)) {
+              handleYouTubeTokenExpired();
+              tasksContext = { status: 'auth_expired' };
+            } else if (syncedTaskLists) {
+              // Fall back to fresh in-session snapshot if live refresh transiently timed out
+              tasksContext = serializeLists(syncedTaskLists);
+            } else {
+              tasksContext = {
+                status: 'unavailable',
+                errorDetail: err instanceof Error ? err.message : undefined,
+              };
+            }
+          } finally {
+            if (timeoutId !== undefined) {
+              window.clearTimeout(timeoutId);
+            }
+          }
+        }
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (youtubeToken) {
+          headers.Authorization = `Bearer ${youtubeToken}`;
+        }
+
         const res = await fetch('/api/assistant/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             messages: historyToSend.map((m) => ({
               role: m.role,
@@ -1167,6 +1257,7 @@ export default function App() {
       handleUpdateCharacterActivity,
       handleYouTubeTokenExpired,
       showMinaBubble,
+      syncedTaskLists,
       timeOfDay,
       youtubeToken,
     ]
@@ -1240,6 +1331,7 @@ export default function App() {
         soundEngine.playMessageReceived();
         setAssistantMood('pinning');
         setMinaMission({ id: Date.now(), taskTitle: created.title });
+        void syncGoogleTasksForMina(youtubeToken);
         showToast(
           `เพิ่มงาน “${created.title}” ลง Google Tasks แล้ว — มีน่ากำลังเดินไปปักหมุดที่กระดานโน้ต`,
           'mina'
@@ -1268,7 +1360,7 @@ export default function App() {
         );
       }
     },
-    [handleYouTubeTokenExpired, showToast, youtubeToken]
+    [handleYouTubeTokenExpired, showToast, syncGoogleTasksForMina, youtubeToken]
   );
 
   const handleCancelChatTask = useCallback((messageId: string) => {
@@ -1789,6 +1881,10 @@ export default function App() {
               accessToken={youtubeToken}
               isSigningInGoogle={isSigningInGoogle}
               googleAuthError={googleAuthError}
+              tasksSummary={minaTasksSummary}
+              isSyncingTasks={isSyncingTasks}
+              tasksSyncError={tasksSyncError}
+              onSyncTasks={() => void syncGoogleTasksForMina()}
               onGoogleSignIn={() => void handleGoogleSignIn()}
               onChangeWorkMode={setWorkMode}
               onSendMessage={handleSendMessage}

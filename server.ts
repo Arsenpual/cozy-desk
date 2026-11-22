@@ -32,6 +32,8 @@ interface IncomingGoogleTask {
   status?: string;
   due?: string;
   notes?: string;
+  updated?: string;
+  parent?: string;
 }
 
 interface IncomingGoogleTaskList {
@@ -43,6 +45,7 @@ interface IncomingGoogleTaskList {
 interface IncomingTasksContext {
   status?: 'connected' | 'not_signed_in' | 'auth_expired' | 'unavailable';
   lists?: IncomingGoogleTaskList[];
+  errorDetail?: string;
 }
 
 interface ChatRequestBody {
@@ -448,6 +451,122 @@ function createGeminiClient(): GoogleGenAI {
   });
 }
 
+async function fetchGoogleTasksFromBearer(
+  accessToken: string
+): Promise<IncomingTasksContext> {
+  const TASKS_API_BASE = 'https://tasks.googleapis.com/tasks/v1';
+  const fetchJson = async <T>(url: string): Promise<T> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+        },
+        signal: controller.signal,
+      });
+      if (res.status === 401 || res.status === 403) {
+        const err = new Error(`GOOGLE_TASKS_AUTH_${res.status}`);
+        (err as { status?: number }).status = res.status;
+        throw err;
+      }
+      if (!res.ok) {
+        throw new Error(`GOOGLE_TASKS_HTTP_${res.status}`);
+      }
+      return (await res.json()) as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    interface ListsResp {
+      nextPageToken?: string;
+      items?: Array<{ id?: string; title?: string }>;
+    }
+    interface TasksResp {
+      nextPageToken?: string;
+      items?: Array<{
+        id?: string;
+        title?: string;
+        notes?: string;
+        due?: string;
+        status?: string;
+        updated?: string;
+        parent?: string;
+        deleted?: boolean;
+      }>;
+    }
+
+    const rawLists: Array<{ id: string; title: string }> = [];
+    let listPageToken: string | undefined;
+    let listPages = 0;
+    do {
+      const q = new URLSearchParams({ maxResults: '100' });
+      if (listPageToken) q.set('pageToken', listPageToken);
+      const data = await fetchJson<ListsResp>(`${TASKS_API_BASE}/users/@me/lists?${q.toString()}`);
+      for (const item of data.items ?? []) {
+        if (item.id) {
+          rawLists.push({ id: item.id, title: item.title || 'รายการงาน' });
+        }
+      }
+      listPageToken = data.nextPageToken;
+      listPages += 1;
+    } while (listPageToken && listPages < 5);
+
+    const listsWithTasks = await Promise.all(
+      rawLists.map(async (list): Promise<IncomingGoogleTaskList> => {
+        const items: IncomingGoogleTask[] = [];
+        let pageToken: string | undefined;
+        let pages = 0;
+        do {
+          const q = new URLSearchParams({
+            showCompleted: 'true',
+            showHidden: 'true',
+            maxResults: '100',
+          });
+          if (pageToken) q.set('pageToken', pageToken);
+          const data = await fetchJson<TasksResp>(
+            `${TASKS_API_BASE}/lists/${encodeURIComponent(list.id)}/tasks?${q.toString()}`
+          );
+          for (const t of data.items ?? []) {
+            if (!t.id || t.deleted) continue;
+            items.push({
+              id: t.id,
+              title: t.title || '(ไม่มีชื่องาน)',
+              status: t.status === 'completed' ? 'completed' : 'needsAction',
+              due: t.due,
+              notes: t.notes,
+              updated: t.updated,
+              parent: t.parent,
+            });
+          }
+          pageToken = data.nextPageToken;
+          pages += 1;
+        } while (pageToken && pages < 10);
+
+        return {
+          id: list.id,
+          title: list.title,
+          tasks: items,
+        };
+      })
+    );
+
+    return { status: 'connected', lists: listsWithTasks };
+  } catch (err) {
+    const status = (err as { status?: number } | null)?.status;
+    if (status === 401 || status === 403) {
+      return { status: 'auth_expired' };
+    }
+    return {
+      status: 'unavailable',
+      errorDetail: err instanceof Error ? err.message : 'ไม่สามารถดึงข้อมูล Google Tasks ได้',
+    };
+  }
+}
+
 function formatGoogleTasksContext(
   tasksContext: IncomingTasksContext | undefined,
   localDate: string
@@ -457,7 +576,7 @@ function formatGoogleTasksContext(
   if (!tasksContext || status === 'not_signed_in') {
     return [
       'สถานะ Google Tasks ปัจจุบัน: ผู้ใช้ยังไม่ได้เข้าสู่ระบบ Google (Sign in with Google)',
-      '- หากผู้ใช้ถามถึงงานใน Google Tasks หรือขอให้สรุป/รายงานงานที่มีอยู่ ให้แจ้งอย่างสุภาพว่ายังมองไม่เห็นรายการงานเพราะยังไม่ได้เชื่อมต่อบัญชี Google และแนะนำให้กดปุ่ม "Sign in with Google" ก่อน (ห้ามเดาหรือแต่งชื่องานขึ้นมาเอง)',
+      '- หากผู้ใช้ถามถึงงานใน Google Tasks หรือขอให้สรุป/รายงานงานที่มีอยู่ ให้แจ้งอย่างสุภาพว่ายังมองไม่เห็นรายการงานเพราะยังไม่ได้เชื่อมต่อบัญชี Google และแนะนำให้กดปุ่ม "Sign in with Google" ในแถบ Google Tasks ด้านบนช่องแชทก่อน (ห้ามเดาหรือแต่งชื่องานขึ้นมาเอง)',
     ].join('\n');
   }
 
@@ -470,88 +589,117 @@ function formatGoogleTasksContext(
 
   if (status === 'unavailable') {
     return [
-      'สถานะ Google Tasks ปัจจุบัน: ไม่สามารถดึงข้อมูลจาก Google Tasks ได้ชั่วคราว',
-      '- หากผู้ใช้ถามถึงรายการงาน ให้แจ้งว่าตอนนี้เชื่อมต่อดึงข้อมูลจาก Google Tasks ไม่สำเร็จชั่วคราว แนะนำให้ลองถามใหม่อีกครั้งหรือเปิดดูที่กระดานโน้ตในห้องทำงาน',
+      `สถานะ Google Tasks ปัจจุบัน: ไม่สามารถดึงข้อมูลจาก Google Tasks ได้ชั่วคราว${tasksContext.errorDetail ? ` (${tasksContext.errorDetail})` : ''}`,
+      '- หากผู้ใช้ถามถึงรายการงาน ให้แจ้งว่าตอนนี้เชื่อมต่อดึงข้อมูลจาก Google Tasks ไม่สำเร็จชั่วคราว แนะนำให้กดปุ่ม "ซิงค์" ในแถบ Google Tasks หรือเปิดดูที่กระดานโน้ตในห้องทำงานแล้วลองถามใหม่อีกครั้ง',
     ].join('\n');
   }
 
-  const rawLists = Array.isArray(tasksContext.lists) ? tasksContext.lists.slice(0, 20) : [];
-  let totalPending = 0;
-  let totalCompleted = 0;
-  let renderedTaskCount = 0;
-  const MAX_RENDERED_TASKS = 150;
+  const rawLists = Array.isArray(tasksContext.lists) ? tasksContext.lists.slice(0, 50) : [];
+  const MAX_RENDERED_TASKS = 300;
 
-  const listBlocks: string[] = [];
+  interface PreparedList {
+    title: string;
+    pending: IncomingGoogleTask[];
+    completed: IncomingGoogleTask[];
+    lines: string[];
+  }
 
-  for (const list of rawLists) {
+  const preparedLists: PreparedList[] = rawLists.map((list) => {
     const listTitle =
       typeof list?.title === 'string' && list.title.trim()
         ? list.title.trim().slice(0, 100)
         : 'รายการงาน';
     const rawTasks = Array.isArray(list?.tasks) ? list.tasks : [];
+    const pending = rawTasks.filter((t) => t?.status !== 'completed');
+    const completed = rawTasks
+      .filter((t) => t?.status === 'completed')
+      .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''));
+    return { title: listTitle, pending, completed, lines: [] };
+  });
 
-    const pendingTasks = rawTasks.filter((t) => t?.status !== 'completed');
-    const completedTasks = rawTasks.filter((t) => t?.status === 'completed');
+  const totalPending = preparedLists.reduce((acc, l) => acc + l.pending.length, 0);
+  const totalCompleted = preparedLists.reduce((acc, l) => acc + l.completed.length, 0);
 
-    totalPending += pendingTasks.length;
-    totalCompleted += completedTasks.length;
+  const formatTaskLine = (task: IncomingGoogleTask, isDone: boolean): string => {
+    const title =
+      typeof task?.title === 'string' && task.title.trim()
+        ? task.title.trim().slice(0, 200)
+        : '(ไม่มีชื่องาน)';
+    const dueDate =
+      typeof task?.due === 'string' && /^\d{4}-\d{2}-\d{2}/.test(task.due)
+        ? task.due.slice(0, 10)
+        : '';
+    const notes =
+      typeof task?.notes === 'string' && task.notes.trim()
+        ? task.notes.trim().replace(/\s+/g, ' ').slice(0, 180)
+        : '';
 
-    const orderedTasks = [...pendingTasks, ...completedTasks];
-    const lines: string[] = [];
-
-    for (const task of orderedTasks) {
-      if (renderedTaskCount >= MAX_RENDERED_TASKS) break;
-      const title =
-        typeof task?.title === 'string' && task.title.trim()
-          ? task.title.trim().slice(0, 200)
-          : '(ไม่มีชื่องาน)';
-      const isDone = task?.status === 'completed';
-      const dueDate =
-        typeof task?.due === 'string' && /^\d{4}-\d{2}-\d{2}/.test(task.due)
-          ? task.due.slice(0, 10)
-          : '';
-      const notes =
-        typeof task?.notes === 'string' && task.notes.trim()
-          ? task.notes.trim().replace(/\s+/g, ' ').slice(0, 160)
-          : '';
-
-      let dueTag = '';
-      if (dueDate) {
-        if (!isDone && dueDate < localDate) {
-          dueTag = ` | กำหนดส่ง: ${dueDate} (เลยกำหนด)`;
-        } else if (!isDone && dueDate === localDate) {
-          dueTag = ` | กำหนดส่ง: ${dueDate} (วันนี้)`;
-        } else {
-          dueTag = ` | กำหนดส่ง: ${dueDate}`;
-        }
+    let dueTag = '';
+    if (dueDate) {
+      if (!isDone && dueDate < localDate) {
+        dueTag = ` | กำหนดส่ง: ${dueDate} (เลยกำหนด)`;
+      } else if (!isDone && dueDate === localDate) {
+        dueTag = ` | กำหนดส่ง: ${dueDate} (วันนี้)`;
+      } else {
+        dueTag = ` | กำหนดส่ง: ${dueDate}`;
       }
-      const notesTag = notes ? ` | โน้ต: ${notes}` : '';
-      lines.push(`  - [${isDone ? '✓ เสร็จแล้ว' : 'ยังไม่เสร็จ'}] ${title}${dueTag}${notesTag}`);
-      renderedTaskCount += 1;
     }
+    const notesTag = notes ? ` | โน้ต: ${notes}` : '';
+    const indent = task.parent ? '    ↳ ' : '  - ';
+    return `${indent}[${isDone ? '✓ เสร็จแล้ว' : 'ยังไม่เสร็จ'}] ${title}${dueTag}${notesTag}`;
+  };
 
-    if (lines.length === 0) {
-      listBlocks.push(`• รายการ "${listTitle}" (ไม่มีงานในรายการนี้)`);
-    } else {
-      listBlocks.push(
-        `• รายการ "${listTitle}" (ค้าง ${pendingTasks.length} / เสร็จแล้ว ${completedTasks.length}):\n${lines.join('\n')}`
-      );
+  let renderedTaskCount = 0;
+
+  // Pass 1: ALWAYS include ALL pending (needsAction) tasks across EVERY list first
+  for (const list of preparedLists) {
+    for (const task of list.pending) {
+      if (renderedTaskCount >= MAX_RENDERED_TASKS) break;
+      list.lines.push(formatTaskLine(task, false));
+      renderedTaskCount += 1;
     }
   }
 
+  // Pass 2: Allocate remaining budget to recently completed tasks across lists
+  const remainingForCompleted = Math.max(0, MAX_RENDERED_TASKS - renderedTaskCount);
+  if (remainingForCompleted > 0 && preparedLists.length > 0) {
+    const listsWithCompleted = preparedLists.filter((l) => l.completed.length > 0);
+    const perListQuota = Math.max(
+      5,
+      Math.floor(remainingForCompleted / Math.max(1, listsWithCompleted.length))
+    );
+    for (const list of listsWithCompleted) {
+      let addedInList = 0;
+      for (const task of list.completed) {
+        if (renderedTaskCount >= MAX_RENDERED_TASKS || addedInList >= perListQuota) break;
+        list.lines.push(formatTaskLine(task, true));
+        renderedTaskCount += 1;
+        addedInList += 1;
+      }
+    }
+  }
+
+  const listBlocks = preparedLists.map((list) => {
+    if (list.lines.length === 0) {
+      return `• รายการ "${list.title}" (ไม่มีงานในรายการนี้)`;
+    }
+    return `• รายการ "${list.title}" (ค้าง ${list.pending.length} / เสร็จแล้ว ${list.completed.length}):\n${list.lines.join('\n')}`;
+  });
+
   const truncatedNote =
     totalPending + totalCompleted > renderedTaskCount
-      ? `\n(หมายเหตุ: แสดง ${renderedTaskCount} จากทั้งหมด ${totalPending + totalCompleted} งาน)`
+      ? `\n(หมายเหตุ: แสดงรายละเอียด ${renderedTaskCount} งานล่าสุด จากทั้งหมด ${totalPending + totalCompleted} งาน โดยแสดงงานที่ยังไม่เสร็จครบทุกงานก่อน)`
       : '';
 
   return [
-    `ข้อมูล Google Tasks จริงล่าสุดทั้งหมดของผู้ใช้ (อัปเดตเรียลไทม์ ณ ${localDate} | งานค้างทั้งหมด ${totalPending} งาน, เสร็จแล้ว ${totalCompleted} งาน):`,
+    'สำคัญมาก: ข้อมูล Google Tasks ด้านล่างนี้ดึงสดมาจากบัญชี Google จริงของผู้ใช้ในรอบคำถามนี้โดยตรง (อัปเดตเรียลไทม์) — หากในประวัติแชทก่อนหน้านี้เคยตอบว่ามองไม่เห็นหรือยังไม่ได้เชื่อมต่อ ให้ละทิ้งคำตอบเก่านั้นและใช้ข้อมูลจริงล่าสุดด้านล่างเป็นหลักเสมอ',
+    `ข้อมูล Google Tasks จริงล่าสุดทั้งหมดของผู้ใช้ (ณ ${localDate} | ทั้งหมด ${preparedLists.length} รายการ | งานค้างทั้งหมด ${totalPending} งาน, เสร็จแล้ว ${totalCompleted} งาน):`,
     listBlocks.length > 0 ? listBlocks.join('\n\n') : '(ยังไม่มีรายการงานใน Google Tasks)',
     truncatedNote,
     'แนวทางการรายงาน Google Tasks:',
     '- เมื่อผู้ใช้ถามถึงงาน (เช่น "มีงานอะไรบ้าง", "เช็ค Google Tasks", "สรุปงานวันนี้", "งานค้างมีอะไร", "รายงาน task ทั้งหมด") ให้รายงานจากข้อมูลจริงด้านบนทั้งหมด (รวมถึงงานที่ผู้ใช้เพิ่มจากมือถือ/เว็บ Google Tasks ไม่ใช่แค่ที่เพิ่มในแชท)',
-    '- แยกหัวข้อหรือจัดรูปแบบให้อ่านง่าย เช่น แยกงานที่ยังไม่เสร็จ / งานเลยกำหนด / งานวันนี้ / งานที่เสร็จแล้ว หรือแยกตามชื่อ Task List หากมีหลายรายการ',
-    '- หากไม่มีงานค้างอยู่เลย ให้แจ้งให้ชัดเจนว่าตอนนี้ไม่มีงานค้างใน Google Tasks',
+    '- แยกหัวข้อหรือจัดรูปแบบให้อ่านง่าย เช่น แยกตามชื่อรายการ (Task List) หรือแยกงานเลยกำหนด / งานวันนี้ / งานที่ยังไม่เสร็จ / งานที่เสร็จแล้ว พร้อมระบุวันครบกำหนดและโน้ตสำคัญถ้ามี',
+    '- หากไม่มีงานค้างอยู่เลย ให้แจ้งให้ชัดเจนว่าตอนนี้ไม่มีงานค้างใน Google Tasks (และแจ้งงานที่เสร็จแล้วถ้ามี)',
   ]
     .filter(Boolean)
     .join('\n');
@@ -685,7 +833,7 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -1255,11 +1403,27 @@ async function startServer() {
     }, 8000);
 
     try {
+      let effectiveTasksContext = body.tasksContext;
+      const authHeader = req.headers.authorization;
+      const bearerToken =
+        typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+          ? authHeader.slice(7).trim()
+          : '';
+
+      if (
+        bearerToken &&
+        (!effectiveTasksContext ||
+          effectiveTasksContext.status === 'unavailable' ||
+          effectiveTasksContext.status === 'not_signed_in')
+      ) {
+        effectiveTasksContext = await fetchGoogleTasksFromBearer(bearerToken);
+      }
+
       const systemInstruction = buildSystemInstruction(
         mode,
         timeOfDay,
         localDate,
-        body.tasksContext
+        effectiveTasksContext
       );
       let emittedAnyChunk = false;
       let emittedText = false;
