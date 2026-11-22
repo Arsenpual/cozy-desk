@@ -22,17 +22,22 @@ import type {
   TimeOfDay,
 } from '../types/game';
 import {
+  AGY_APPROACH_RADIUS,
+  AGY_LEAVE_RADIUS,
+  AGY_POS,
   AGY_STAND_POS,
   CAMERA_BASE_SCALE,
   CAMERA_DEFAULT_ZOOM,
   CAMERA_MAX_ZOOM,
   CAMERA_MIN_ZOOM,
   collidesWithWorld,
+  DINING_CHAIR_SPOTS,
   DIVIDER_COL,
   findNearestInteractable,
   getInteractableAtPoint,
   getRoomZone,
   INTERACTABLES,
+  isDiningChairSeatId,
   isPointInShowerWetZone,
   LOWER_EAST_WALL_COL,
   MID_WALL_ROW,
@@ -87,6 +92,7 @@ interface GameCanvasProps {
   onMinaSummonArrived: (mode: MinaSummonMode) => void;
   onMinaMissionEvent?: (event: 'started' | 'pinned' | 'returned', taskTitle: string) => void;
   onMinaProximityEvent?: (event: 'approached' | 'returning') => void;
+  onAntigravityProximityEvent?: (event: 'approached' | 'returning') => void;
   onCameraChange?: (cameraState: CameraUiState) => void;
 }
 
@@ -196,6 +202,7 @@ const INSPECT_HINT_DELAY = 0.35; // seconds before subtle dwell progress cue app
 const INSPECT_REVEAL_DELAY = 2.0; // seconds of hover dwell to reveal object tooltip
 
 const MINA_DESK_INTERACTABLE = INTERACTABLES.find((i) => i.id === 'mina_desk') ?? null;
+const AGY_DESK_INTERACTABLE = INTERACTABLES.find((i) => i.id === 'antigravity_desk') ?? null;
 
 const ALL_SOFA_ACTIVITIES: SofaActivity[] = ['tea', 'newspaper', 'tv_remote'];
 
@@ -252,29 +259,45 @@ function isPlayerInsideMinaRadius(player: PlayerState, mina: MinaNpcState): bool
   return false;
 }
 
+function isPlayerInsideAgyRadius(player: PlayerState, isAlreadyEngaged: boolean): boolean {
+  if (getRoomZone(player.x, player.y) !== 'office') return false;
+  const distToAgy = Math.hypot(player.x - AGY_POS.x, player.y - AGY_POS.y);
+  if (distToAgy <= AGY_APPROACH_RADIUS) return true;
+  if (isAlreadyEngaged && distToAgy <= AGY_LEAVE_RADIUS) return true;
+  return false;
+}
+
 function getEffectiveNearestInteractable(
   player: PlayerState,
-  mina: MinaNpcState
+  mina: MinaNpcState,
+  isAgyEngaged = false
 ): InteractableObject | null {
   const staticNearest = findNearestInteractable(player.x, player.y);
-  // Strictly gate access to Mina ('mina_desk') to players inside Mina's proximity radius only
-  const filteredStatic = staticNearest?.id === 'mina_desk' ? null : staticNearest;
-  if (!MINA_DESK_INTERACTABLE) return filteredStatic;
+  // Strictly gate access to Mina ('mina_desk') and Antigravity ('antigravity_desk') to their proximity radii
+  const filteredStatic =
+    staticNearest?.id === 'mina_desk' || staticNearest?.id === 'antigravity_desk'
+      ? null
+      : staticNearest;
 
   const canTalkToMina =
+    Boolean(MINA_DESK_INTERACTABLE) &&
     isPlayerInsideMinaRadius(player, mina) &&
     mina.phase !== 'walking_to_board' &&
     mina.phase !== 'pinning';
 
-  if (!canTalkToMina) {
-    return filteredStatic;
+  if (canTalkToMina && MINA_DESK_INTERACTABLE) {
+    return {
+      ...MINA_DESK_INTERACTABLE,
+      label: 'มีน่า (ผู้ช่วย AI)',
+      actionLabel: 'คุยงานกับมีน่า',
+    };
   }
 
-  return {
-    ...MINA_DESK_INTERACTABLE,
-    label: 'มีน่า (ผู้ช่วย AI)',
-    actionLabel: 'คุยงานกับมีน่า',
-  };
+  if (AGY_DESK_INTERACTABLE && isPlayerInsideAgyRadius(player, isAgyEngaged)) {
+    return AGY_DESK_INTERACTABLE;
+  }
+
+  return filteredStatic;
 }
 
 export function GameCanvas({
@@ -302,6 +325,7 @@ export function GameCanvas({
   onMinaSummonArrived,
   onMinaMissionEvent,
   onMinaProximityEvent,
+  onAntigravityProximityEvent,
   onCameraChange,
 }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -381,6 +405,7 @@ export function GameCanvas({
   const clickMarkerRef = useRef<{ x: number; y: number; ttl: number } | null>(null);
   const currentZoneRef = useRef<RoomZone>('living');
   const nearestKeyRef = useRef<string | null>(null);
+  const agyEngagedRef = useRef(false);
 
   // Smooth 2D camera state (follows player dead-center by default; user can pan, zoom, or pick room focus)
   const cameraRef = useRef<CameraInternalState>({
@@ -454,6 +479,7 @@ export function GameCanvas({
     onMinaSummonArrived,
     onMinaMissionEvent,
     onMinaProximityEvent,
+    onAntigravityProximityEvent,
     onCameraChange,
   });
   propsRef.current = {
@@ -478,6 +504,7 @@ export function GameCanvas({
     onMinaSummonArrived,
     onMinaMissionEvent,
     onMinaProximityEvent,
+    onAntigravityProximityEvent,
     onCameraChange,
   };
 
@@ -652,6 +679,10 @@ export function GameCanvas({
       } else if (prevSeat === 'sofa') {
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
+      } else if (isDiningChairSeatId(prevSeat)) {
+        const spot = DINING_CHAIR_SPOTS[prevSeat];
+        player.x = spot.standPos.x;
+        player.y = spot.standPos.y;
       }
       player.facing = 'down';
     }
@@ -703,7 +734,7 @@ export function GameCanvas({
     }
   }, [isModalOpen]);
 
-  // Snap player neatly onto their personal computer chair or Living Room sofa when sitting
+  // Snap player neatly onto their personal computer chair, Living Room sofa, or Kitchen dining chairs when sitting
   useEffect(() => {
     const player = playerRef.current;
     if (playerSeat === 'workdesk') {
@@ -731,6 +762,20 @@ export function GameCanvas({
       waypointsRef.current = [];
       pendingInteractRef.current = null;
       keysRef.current.clear();
+    } else if (isDiningChairSeatId(playerSeat)) {
+      const spot = DINING_CHAIR_SPOTS[playerSeat];
+      player.x = spot.seatPos.x;
+      player.y = spot.seatPos.y;
+      player.facing = spot.facing;
+      player.isMoving = false;
+      player.walkFrame = 0;
+      player.isSitting = true;
+      player.seat = playerSeat;
+      player.sofaActivity = null;
+      player.sofaActivityElapsed = 0;
+      waypointsRef.current = [];
+      pendingInteractRef.current = null;
+      keysRef.current.clear();
     } else if (player.isSitting) {
       const prevSeat = player.seat;
       player.isSitting = false;
@@ -740,11 +785,17 @@ export function GameCanvas({
       if (prevSeat === 'workdesk') {
         player.x = WORK_STAND_POS.x;
         player.y = WORK_STAND_POS.y;
+        player.facing = 'down';
       } else if (prevSeat === 'sofa') {
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
+        player.facing = 'down';
+      } else if (isDiningChairSeatId(prevSeat)) {
+        const spot = DINING_CHAIR_SPOTS[prevSeat];
+        player.x = spot.standPos.x;
+        player.y = spot.standPos.y;
+        player.facing = prevSeat === 'dining_chair_nw' || prevSeat === 'dining_chair_ne' ? 'up' : 'down';
       }
-      player.facing = 'down';
     }
   }, [playerSeat]);
 
@@ -815,11 +866,17 @@ export function GameCanvas({
       if (prevSeat === 'workdesk') {
         player.x = WORK_STAND_POS.x;
         player.y = WORK_STAND_POS.y;
+        player.facing = 'down';
       } else if (prevSeat === 'sofa') {
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
+        player.facing = 'down';
+      } else if (isDiningChairSeatId(prevSeat)) {
+        const spot = DINING_CHAIR_SPOTS[prevSeat];
+        player.x = spot.standPos.x;
+        player.y = spot.standPos.y;
+        player.facing = prevSeat === 'dining_chair_nw' || prevSeat === 'dining_chair_ne' ? 'up' : 'down';
       }
-      player.facing = 'down';
       propsRef.current.onStandUp();
     };
 
@@ -857,7 +914,11 @@ export function GameCanvas({
           standUpImmediately();
           return;
         }
-        const nearest = getEffectiveNearestInteractable(playerRef.current, minaRef.current);
+        const nearest = getEffectiveNearestInteractable(
+          playerRef.current,
+          minaRef.current,
+          agyEngagedRef.current
+        );
         if (nearest) {
           e.preventDefault();
           propsRef.current.onInteract(nearest.id);
@@ -1006,7 +1067,7 @@ export function GameCanvas({
           if (!moved && waypointsRef.current.length > 0) {
             waypointsRef.current = [];
             if (pendingInteractRef.current) {
-              const nearest = getEffectiveNearestInteractable(player, mina);
+              const nearest = getEffectiveNearestInteractable(player, mina, agyEngagedRef.current);
               if (nearest && nearest.id === pendingInteractRef.current) {
                 propsRef.current.onInteract(pendingInteractRef.current);
               }
@@ -1447,11 +1508,24 @@ export function GameCanvas({
         }
       }
 
+      // Autonomous Antigravity proximity tracking (same tight-radius engagement & leave hysteresis as Mina)
+      if (!modalOpen) {
+        const nextAgyEngaged = isPlayerInsideAgyRadius(player, agyEngagedRef.current);
+        if (nextAgyEngaged !== agyEngagedRef.current) {
+          agyEngagedRef.current = nextAgyEngaged;
+          if (state === 'PLAYING') {
+            propsRef.current.onAntigravityProximityEvent?.(
+              nextAgyEngaged ? 'approached' : 'returning'
+            );
+          }
+        }
+      }
+
       // Nearest interactable detection (hidden while seated; standing up clears seat)
       if (state === 'PLAYING' && !modalOpen) {
         const nearest = player.isSitting
           ? null
-          : getEffectiveNearestInteractable(player, mina);
+          : getEffectiveNearestInteractable(player, mina, agyEngagedRef.current);
         const nextKey = nearest ? `${nearest.id}:${nearest.label}` : null;
         if (nextKey !== nearestKeyRef.current) {
           nearestKeyRef.current = nextKey;
@@ -1599,7 +1673,7 @@ export function GameCanvas({
       if (ctx) {
         const nearest =
           state === 'PLAYING' && !modalOpen && !player.isSitting
-            ? getEffectiveNearestInteractable(player, mina)
+            ? getEffectiveNearestInteractable(player, mina, agyEngagedRef.current)
             : null;
         renderHouseScene(ctx, {
           player,
@@ -1832,7 +1906,7 @@ export function GameCanvas({
       return;
     }
 
-    // Handle clicks while seated on personal workdesk or Living Room sofa
+    // Handle clicks while seated on personal workdesk, Living Room sofa, or Kitchen dining chairs
     if (player.isSitting) {
       if (player.seat === 'sofa' && clickedObj?.id === 'tv') {
         propsRef.current.onInteract('tv');
@@ -1840,6 +1914,10 @@ export function GameCanvas({
       }
       if (player.seat === 'workdesk' && clickedObj?.id === 'pinboard') {
         propsRef.current.onInteract('pinboard');
+        return;
+      }
+      if (isDiningChairSeatId(player.seat) && clickedObj?.id === 'dining_table') {
+        propsRef.current.onInteract('dining_table');
         return;
       }
       const prevSeat = player.seat;
@@ -1850,11 +1928,17 @@ export function GameCanvas({
       if (prevSeat === 'workdesk') {
         player.x = WORK_STAND_POS.x;
         player.y = WORK_STAND_POS.y;
+        player.facing = 'down';
       } else if (prevSeat === 'sofa') {
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
+        player.facing = 'down';
+      } else if (isDiningChairSeatId(prevSeat)) {
+        const spot = DINING_CHAIR_SPOTS[prevSeat];
+        player.x = spot.standPos.x;
+        player.y = spot.standPos.y;
+        player.facing = prevSeat === 'dining_chair_nw' || prevSeat === 'dining_chair_ne' ? 'up' : 'down';
       }
-      player.facing = 'down';
       propsRef.current.onStandUp();
       // Clicking the same seat again simply stands the player up
       if (clickedObj?.id === prevSeat) {
@@ -1878,6 +1962,20 @@ export function GameCanvas({
       return;
     }
 
+    // Clicking Antigravity station or NPC sprite: open only if inside tight radius, else walk up to AGY_STAND_POS
+    const clickedAgy = Math.hypot(wx - AGY_POS.x, wy - (AGY_POS.y - 8)) <= 24;
+    if (clickedAgy || clickedObj?.id === 'antigravity_desk') {
+      if (isPlayerInsideAgyRadius(player, agyEngagedRef.current)) {
+        propsRef.current.onInteract('antigravity_desk');
+        return;
+      }
+      const path = findWalkablePath(player.x, player.y, AGY_STAND_POS.x, AGY_STAND_POS.y);
+      waypointsRef.current = path;
+      pendingInteractRef.current = 'antigravity_desk';
+      clickMarkerRef.current = { x: AGY_STAND_POS.x, y: AGY_STAND_POS.y, ttl: 35 };
+      return;
+    }
+
     if (clickedObj) {
       const dist = Math.hypot(
         player.x - (clickedObj.x + clickedObj.w / 2),
@@ -1897,27 +1995,38 @@ export function GameCanvas({
           ? { x: WORK_STAND_POS.x, y: WORK_STAND_POS.y }
           : clickedObj.id === 'sofa'
             ? { x: SOFA_STAND_POS.x, y: SOFA_STAND_POS.y }
-            : clickedObj.id === 'pinboard'
-              ? { x: MINA_PINBOARD_SPOT.x, y: 2.85 * TILE }
-              : clickedObj.id === 'antigravity_desk'
-                ? { x: AGY_STAND_POS.x, y: AGY_STAND_POS.y }
-                : clickedObj.id === 'drive_table'
+            : isDiningChairSeatId(clickedObj.id)
+              ? {
+                  x: DINING_CHAIR_SPOTS[clickedObj.id].standPos.x,
+                  y: DINING_CHAIR_SPOTS[clickedObj.id].standPos.y,
+                }
+              : clickedObj.id === 'dining_table'
                 ? {
                     x: clickedObj.x + clickedObj.w / 2,
                     y:
                       player.y < clickedObj.y + clickedObj.h / 2
-                        ? clickedObj.y - 18
-                        : clickedObj.y + clickedObj.h + 18,
+                        ? clickedObj.y - 24
+                        : clickedObj.y + clickedObj.h + 24,
                   }
-                : clickedObj.id === 'tv'
-                  ? {
-                      x: clickedObj.x + clickedObj.w / 2,
-                      y: clickedObj.y - 22,
-                    }
-                  : {
-                      x: clickedObj.x + clickedObj.w / 2,
-                      y: Math.min(11 * TILE, clickedObj.y + clickedObj.h + 18),
-                    };
+                : clickedObj.id === 'pinboard'
+                  ? { x: MINA_PINBOARD_SPOT.x, y: 2.85 * TILE }
+                  : clickedObj.id === 'drive_table'
+                    ? {
+                        x: clickedObj.x + clickedObj.w / 2,
+                        y:
+                          player.y < clickedObj.y + clickedObj.h / 2
+                            ? clickedObj.y - 18
+                            : clickedObj.y + clickedObj.h + 18,
+                      }
+                    : clickedObj.id === 'tv'
+                      ? {
+                          x: clickedObj.x + clickedObj.w / 2,
+                          y: clickedObj.y - 22,
+                        }
+                      : {
+                          x: clickedObj.x + clickedObj.w / 2,
+                          y: Math.min(11 * TILE, clickedObj.y + clickedObj.h + 18),
+                        };
 
       const path = findWalkablePath(player.x, player.y, targetSpot.x, targetSpot.y);
       waypointsRef.current = path;

@@ -8,6 +8,7 @@ import type {
   TimeOfDay,
 } from '../types/game';
 import {
+  AGY_APPROACH_RADIUS,
   AGY_POS,
   CAMERA_BASE_SCALE,
   CENTER_TABLE_RECT,
@@ -33,6 +34,9 @@ import {
 import {
   drawBathroomFurniture,
   drawGlassShowerEnclosure,
+  drawKitchenDiningNorthChairs,
+  drawKitchenDiningSouthChairBackrests,
+  drawKitchenDiningSouthChairSeatPads,
   drawKitchenDiningTable,
   drawKitchenFurniture,
   drawLowerRoomFloors,
@@ -589,6 +593,44 @@ function drawMinaProximityZone(
   ctx.setLineDash([5, 4]);
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = `rgba(245, 184, 65, ${strokeAlpha.toFixed(3)})`;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAntigravityProximityZone(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  isAntigravityOpen: boolean,
+  tick: number
+) {
+  const dist = Math.hypot(player.x - AGY_POS.x, player.y - AGY_POS.y);
+  const inOffice = getRoomZone(player.x, player.y) === 'office';
+  if (!inOffice) return;
+
+  const isInside = dist <= AGY_APPROACH_RADIUS || isAntigravityOpen;
+  const pulse = 0.04 * Math.sin(tick * 0.08);
+  const strokeAlpha = isInside ? 0.45 + pulse : 0.18;
+  const fillAlpha = isInside ? 0.08 : 0.03;
+
+  ctx.save();
+  // Clip to the expanded 12-column interior office floor so the ring stays cleanly inside walls
+  ctx.beginPath();
+  ctx.rect(
+    (DIVIDER_COL + 1.05) * TILE,
+    2.1 * TILE,
+    (OFFICE_EAST_WALL_COL - DIVIDER_COL - 1.15) * TILE,
+    9.75 * TILE
+  );
+  ctx.clip();
+
+  ctx.beginPath();
+  ctx.arc(AGY_POS.x, AGY_POS.y, AGY_APPROACH_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(56, 189, 248, ${fillAlpha.toFixed(3)})`;
+  ctx.fill();
+
+  ctx.setLineDash([5, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = `rgba(56, 189, 248, ${strokeAlpha.toFixed(3)})`;
   ctx.stroke();
   ctx.restore();
 }
@@ -1408,7 +1450,9 @@ function drawAntigravityNpc(
   const x = Math.round(AGY_POS.x);
   const y = Math.round(AGY_POS.y);
   const distToPlayer = Math.hypot(player.x - AGY_POS.x, player.y - AGY_POS.y);
-  const isEngaged = isAntigravityOpen || distToPlayer <= 78;
+  const isEngaged =
+    isAntigravityOpen ||
+    (getRoomZone(player.x, player.y) === 'office' && distToPlayer <= AGY_APPROACH_RADIUS);
   const breathe = Math.sin(tick * 0.09) > 0.3 ? 1 : 0;
   const blink = tick % 175 > 168;
 
@@ -1477,7 +1521,9 @@ function drawAntigravityOverlay(
   const x = Math.round(AGY_POS.x);
   const y = Math.round(AGY_POS.y) - 34;
   const distToPlayer = Math.hypot(player.x - AGY_POS.x, player.y - AGY_POS.y);
-  const isEngaged = isAntigravityOpen || distToPlayer <= 84;
+  const isEngaged =
+    isAntigravityOpen ||
+    (getRoomZone(player.x, player.y) === 'office' && distToPlayer <= AGY_APPROACH_RADIUS);
   const floatOffset = Math.sin(tick * 0.08) > 0 ? -1 : 0;
   const by = y + floatOffset;
 
@@ -2014,11 +2060,17 @@ export function renderHouseScene(
     state.player.sofaActivityElapsed >= 0.85;
   const tvScreenActive = state.isTvOn || sofaWatchingTv;
 
-  // 1. Floor, Rugs & Mina Proximity Zone
+  // 1. Floor, Rugs & Assistant Proximity Zones
   drawWoodFloor(ctx);
   drawLowerRoomFloors(ctx);
   drawRugs(ctx);
   drawMinaProximityZone(ctx, state.player, state.isWorking, state.tick);
+  drawAntigravityProximityZone(
+    ctx,
+    state.player,
+    Boolean(state.isAntigravityOpen),
+    state.tick
+  );
 
   // 2. Walls, Windows, Fireplace, Pinboard & Lower Wing Architectural Walls
   const isPinboardActive =
@@ -2060,7 +2112,10 @@ export function renderHouseScene(
   );
 
   const centerTableSortY = CENTER_TABLE_RECT.y + CENTER_TABLE_RECT.h * 0.55;
-  const kitchenDiningSortY = KITCHEN_DINING_RECT.y + KITCHEN_DINING_RECT.h * 0.55;
+  const kitchenDiningNorthChairsSortY = KITCHEN_DINING_RECT.y - 4;
+  const kitchenDiningTableSortY = KITCHEN_DINING_RECT.y + KITCHEN_DINING_RECT.h * 0.55;
+  const kitchenDiningSouthSeatSortY = KITCHEN_DINING_RECT.y + KITCHEN_DINING_RECT.h - 2;
+  const kitchenDiningSouthBackrestSortY = KITCHEN_DINING_RECT.y + KITCHEN_DINING_RECT.h + 14;
   const showerGlassSortY = 18.02 * TILE;
 
   const drawList: Array<{ y: number; draw: () => void }> = [
@@ -2070,8 +2125,20 @@ export function renderHouseScene(
       draw: () => drawCenterDriveTable(ctx, state.tick, state.isDriveOpen),
     },
     {
-      y: kitchenDiningSortY,
-      draw: () => drawKitchenDiningTable(ctx),
+      y: kitchenDiningNorthChairsSortY,
+      draw: () => drawKitchenDiningNorthChairs(ctx),
+    },
+    {
+      y: kitchenDiningTableSortY,
+      draw: () => drawKitchenDiningTable(ctx, state.tick),
+    },
+    {
+      y: kitchenDiningSouthSeatSortY,
+      draw: () => drawKitchenDiningSouthChairSeatPads(ctx),
+    },
+    {
+      y: kitchenDiningSouthBackrestSortY,
+      draw: () => drawKitchenDiningSouthChairBackrests(ctx),
     },
     {
       y: showerGlassSortY,

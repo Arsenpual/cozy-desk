@@ -25,6 +25,7 @@ import {
   CAMERA_DEFAULT_ZOOM,
   CAMERA_MAX_ZOOM,
   CAMERA_MIN_ZOOM,
+  isDiningChairSeatId,
 } from './game/houseMap';
 import type {
   AssistantMood,
@@ -454,6 +455,15 @@ export default function App() {
     [showMinaBubble]
   );
 
+  const handleAntigravityProximityEvent = useCallback(
+    (event: 'approached' | 'returning') => {
+      if (event === 'approached') {
+        soundEngine.playEnterOffice();
+      }
+    },
+    []
+  );
+
   const handleRequestMinaMenu = useCallback((anchor: MinaActionMenuAnchor) => {
     setMinaActionMenu(anchor);
   }, []);
@@ -611,6 +621,36 @@ export default function App() {
       if (id === 'antigravity_desk') {
         soundEngine.playEnterOffice();
         setIsAntigravityOpen(true);
+        return;
+      }
+
+      if (isDiningChairSeatId(id)) {
+        soundEngine.playInteract();
+        const seatPositionLabel: Record<typeof id, string> = {
+          dining_chair_nw: 'ฝั่งบนซ้าย',
+          dining_chair_ne: 'ฝั่งบนขวา',
+          dining_chair_sw: 'ฝั่งล่างซ้าย',
+          dining_chair_se: 'ฝั่งล่างขวา',
+        };
+        setPlayerSeat((curr) => {
+          const next = curr === id ? null : id;
+          if (next === id) {
+            showToast(
+              `นั่งเก้าอี้โต๊ะอาหาร (${seatPositionLabel[id]}) พร้อมหน้าฉลองมื้อไก่งวงคริสต์มาสวันครอบครัวอบอุ่นแล้วครับ (กด WASD / E / Esc เพื่อลุก)`,
+              'player'
+            );
+          }
+          return next;
+        });
+        return;
+      }
+
+      if (id === 'dining_table') {
+        soundEngine.playCoffeeSip();
+        showToast(
+          'ไก่งวงอบคริสต์มาสตัวใหญ่สีทองหอมกรุ่นกลางโต๊ะ สัญลักษณ์แห่งวันครอบครัวแสนอบอุ่น! (คลิกที่เก้าอี้ทั้ง 4 ตัวเพื่อนั่งทานได้เลย)',
+          'player'
+        );
       }
     },
     [showMinaBubble, showToast, tipIndex]
@@ -1221,6 +1261,7 @@ export default function App() {
                   onMinaSummonArrived={handleMinaSummonArrived}
                   onMinaMissionEvent={handleMinaMissionEvent}
                   onMinaProximityEvent={handleMinaProximityEvent}
+                  onAntigravityProximityEvent={handleAntigravityProximityEvent}
                   onCameraChange={setCameraUi}
                 />
 
@@ -1277,7 +1318,9 @@ export default function App() {
                     <span>
                       {playerSeat === 'workdesk'
                         ? 'กำลังนั่งหน้าคอมพิวเตอร์ — ลุกจากโต๊ะ'
-                        : 'กำลังนั่งพักบนโซฟา — ลุกจากโซฟา'}
+                        : playerSeat === 'sofa'
+                          ? 'กำลังนั่งพักบนโซฟา — ลุกจากโซฟา'
+                          : 'กำลังนั่งที่โต๊ะอาหารคริสต์มาส — ลุกจากเก้าอี้'}
                     </span>
                   </button>
                 ) : !isWorking && nearestInteractable ? (
@@ -1304,7 +1347,7 @@ export default function App() {
                           : zone === 'office'
                             ? 'ห้องทำงานส่วนตัว — นั่งหน้าคอมพิวเตอร์ จัดการเอกสาร หรือคุยงานกับมีน่า'
                             : zone === 'kitchen'
-                              ? 'ห้องครัวครอบครัว — ตู้เย็น เตาทำอาหาร โต๊ะอาหาร และทางเข้าห้องน้ำฝั่งขวา'
+                              ? 'ห้องครัวครอบครัว — นั่งเก้าอี้โต๊ะอาหารทั้ง 4 ตัว ฉลองมื้อไก่งวงคริสต์มาสวันครอบครัวอบอุ่น'
                               : 'ห้องน้ำและห้องอาบน้ำ — วางเมาส์ค้างบนสิ่งของประมาณ 2 วินาที เพื่อดูชื่อและรายละเอียด'}
                     </span>
                   </div>
@@ -1351,7 +1394,9 @@ export default function App() {
                       <span>
                         {playerSeat === 'workdesk'
                           ? 'กำลังนั่งหน้าคอมพิวเตอร์ — ลุกจากโต๊ะ'
-                          : 'กำลังนั่งพักบนโซฟา — ลุกจากโซฟา'}
+                          : playerSeat === 'sofa'
+                            ? 'กำลังนั่งพักบนโซฟา — ลุกจากโซฟา'
+                            : 'กำลังนั่งที่โต๊ะอาหารคริสต์มาส — ลุกจากเก้าอี้'}
                       </span>
                     </button>
                   ) : (

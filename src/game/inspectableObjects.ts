@@ -3,6 +3,7 @@ import {
   BATH_DOOR_ROW_END,
   BATH_DOOR_ROW_START,
   DIVIDER_COL,
+  KITCHEN_DINING_RECT,
   LOWER_FLOOR_ROW_START,
   MID_WALL_ROW,
   TILE,
@@ -466,8 +467,93 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
   },
 ];
 
+const DINING_TX = Math.round(KITCHEN_DINING_RECT.x);
+const DINING_TY = Math.round(KITCHEN_DINING_RECT.y);
+const DINING_TW = Math.round(KITCHEN_DINING_RECT.w);
+const DINING_TH = Math.round(KITCHEN_DINING_RECT.h);
+const DINING_CX = DINING_TX + Math.floor(DINING_TW / 2);
+const DINING_CY = DINING_TY + Math.floor(DINING_TH / 2) - 2;
+
+export const KITCHEN_INSPECTABLES: InspectableObject[] = [
+  {
+    id: 'kitchen_christmas_turkey',
+    zone: 'kitchen',
+    areaLabel: 'ห้องครัว · โต๊ะอาหารคริสต์มาส',
+    name: 'ไก่งวงอบคริสต์มาสตัวใหญ่',
+    detail:
+      'ไก่งวงอบสีทองหอมกรุ่นวางบนถาดเงินประดับโรสแมรี่และแครนเบอร์รี่ กลางโต๊ะอาหาร เป็นสัญลักษณ์แห่งวันครอบครัวแสนอบอุ่นในวันคริสต์มาส',
+    x: DINING_CX - 17,
+    y: DINING_CY - 10,
+    w: 34,
+    h: 20,
+    priority: 26,
+  },
+  {
+    id: 'kitchen_dining_chair_nw',
+    zone: 'kitchen',
+    areaLabel: 'ห้องครัว · โต๊ะอาหาร',
+    name: 'เก้าอี้ไม้โอ๊ค (ฝั่งบนซ้าย)',
+    detail: 'เก้าอี้ไม้โอ๊คเบาะครีมนุ่ม สามารถคลิกหรือกด E เพื่อนั่งร่วมโต๊ะอาหารได้',
+    x: DINING_TX + 12,
+    y: DINING_TY - 12,
+    w: 24,
+    h: 20,
+    priority: 20,
+  },
+  {
+    id: 'kitchen_dining_chair_ne',
+    zone: 'kitchen',
+    areaLabel: 'ห้องครัว · โต๊ะอาหาร',
+    name: 'เก้าอี้ไม้โอ๊ค (ฝั่งบนขวา)',
+    detail: 'เก้าอี้ไม้โอ๊คเบาะครีมนุ่ม สามารถคลิกหรือกด E เพื่อนั่งร่วมโต๊ะอาหารได้',
+    x: DINING_TX + DINING_TW - 38,
+    y: DINING_TY - 12,
+    w: 24,
+    h: 20,
+    priority: 20,
+  },
+  {
+    id: 'kitchen_dining_chair_sw',
+    zone: 'kitchen',
+    areaLabel: 'ห้องครัว · โต๊ะอาหาร',
+    name: 'เก้าอี้ไม้โอ๊ค (ฝั่งล่างซ้าย)',
+    detail: 'เก้าอี้ไม้โอ๊คเบาะครีมนุ่ม สามารถคลิกหรือกด E เพื่อนั่งร่วมโต๊ะอาหารได้',
+    x: DINING_TX + 12,
+    y: DINING_TY + DINING_TH - 9,
+    w: 24,
+    h: 22,
+    priority: 20,
+  },
+  {
+    id: 'kitchen_dining_chair_se',
+    zone: 'kitchen',
+    areaLabel: 'ห้องครัว · โต๊ะอาหาร',
+    name: 'เก้าอี้ไม้โอ๊ค (ฝั่งล่างขวา)',
+    detail: 'เก้าอี้ไม้โอ๊คเบาะครีมนุ่ม สามารถคลิกหรือกด E เพื่อนั่งร่วมโต๊ะอาหารได้',
+    x: DINING_TX + DINING_TW - 38,
+    y: DINING_TY + DINING_TH - 9,
+    w: 24,
+    h: 22,
+    priority: 20,
+  },
+  {
+    id: 'kitchen_dining_table',
+    zone: 'kitchen',
+    areaLabel: 'ห้องครัว · โซนรับประทานอาหาร',
+    name: 'โต๊ะอาหารไม้โอ๊คครอบครัว (4 ที่นั่ง)',
+    detail:
+      'โต๊ะอาหารครอบครัวปูผ้าคาดโต๊ะสีแดงคริสต์มาส พร้อมจานเซรามิก 4 ที่นั่งและไก่งวงอบตัวใหญ่กลางโต๊ะ สามารถนั่งได้ครบทั้ง 4 เก้าอี้',
+    x: DINING_TX,
+    y: DINING_TY,
+    w: DINING_TW,
+    h: DINING_TH,
+    priority: 12,
+  },
+];
+
 export const INSPECTABLE_OBJECTS: InspectableObject[] = [
   ...BATHROOM_INSPECTABLES,
+  ...KITCHEN_INSPECTABLES,
 ];
 
 /**

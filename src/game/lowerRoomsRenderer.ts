@@ -581,7 +581,12 @@ export function drawKitchenFurniture(ctx: CanvasRenderingContext2D, tick: number
   pxRect(ctx, bx + 8, by + 25, 7, 3, '#2E3236'); // Foot pedal
 }
 
-function drawDiningChair(ctx: CanvasRenderingContext2D, x: number, y: number, facing: 'south' | 'north') {
+export function drawDiningChair(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  facing: 'south' | 'north'
+) {
   pxRect(ctx, x + 2, y + 18, 20, 4, 'rgba(28, 20, 15, 0.2)');
   // Wooden seat pad
   pxRect(ctx, x + 2, y + 4, 20, 14, '#7E5333');
@@ -597,15 +602,44 @@ function drawDiningChair(ctx: CanvasRenderingContext2D, x: number, y: number, fa
   }
 }
 
-export function drawKitchenDiningTable(ctx: CanvasRenderingContext2D) {
+export function drawKitchenDiningNorthChairs(ctx: CanvasRenderingContext2D) {
+  const tx = Math.round(KITCHEN_DINING_RECT.x);
+  const ty = Math.round(KITCHEN_DINING_RECT.y);
+  const tw = Math.round(KITCHEN_DINING_RECT.w);
+  drawDiningChair(ctx, tx + 13, ty - 11, 'south');
+  drawDiningChair(ctx, tx + tw - 37, ty - 11, 'south');
+}
+
+export function drawKitchenDiningSouthChairSeatPads(ctx: CanvasRenderingContext2D) {
+  const tx = Math.round(KITCHEN_DINING_RECT.x);
+  const ty = Math.round(KITCHEN_DINING_RECT.y);
+  const tw = Math.round(KITCHEN_DINING_RECT.w);
+  const th = Math.round(KITCHEN_DINING_RECT.h);
+  for (const cx of [tx + 13, tx + tw - 37]) {
+    const cy = ty + th - 9;
+    pxRect(ctx, cx + 2, cy + 18, 20, 4, 'rgba(28, 20, 15, 0.2)');
+    pxRect(ctx, cx + 2, cy + 4, 20, 14, '#7E5333');
+    pxRect(ctx, cx + 4, cy + 6, 16, 10, '#C7B49B');
+  }
+}
+
+export function drawKitchenDiningSouthChairBackrests(ctx: CanvasRenderingContext2D) {
+  const tx = Math.round(KITCHEN_DINING_RECT.x);
+  const ty = Math.round(KITCHEN_DINING_RECT.y);
+  const tw = Math.round(KITCHEN_DINING_RECT.w);
+  const th = Math.round(KITCHEN_DINING_RECT.h);
+  for (const cx of [tx + 13, tx + tw - 37]) {
+    const cy = ty + th - 9;
+    pxRect(ctx, cx + 1, cy + 14, 22, 6, '#5A3820');
+    pxRect(ctx, cx + 3, cy + 15, 18, 3, '#8D5F3D');
+  }
+}
+
+export function drawKitchenDiningTable(ctx: CanvasRenderingContext2D, tick = 0) {
   const tx = Math.round(KITCHEN_DINING_RECT.x);
   const ty = Math.round(KITCHEN_DINING_RECT.y);
   const tw = Math.round(KITCHEN_DINING_RECT.w); // ~94px
   const th = Math.round(KITCHEN_DINING_RECT.h); // ~61px
-
-  // 2 North tucked dining chairs (drawn behind tabletop)
-  drawDiningChair(ctx, tx + 13, ty - 11, 'south');
-  drawDiningChair(ctx, tx + tw - 37, ty - 11, 'south');
 
   // Table drop shadow & sturdy oak legs
   pxRect(ctx, tx + 3, ty + th - 2, tw - 6, 7, 'rgba(28, 20, 15, 0.25)');
@@ -618,37 +652,122 @@ export function drawKitchenDiningTable(ctx: CanvasRenderingContext2D) {
   pxRect(ctx, tx + 4, ty + 4, tw - 8, 3, '#B58056');
   pxRect(ctx, tx + 3, ty + th - 8, tw - 6, 4, '#6E462A');
 
-  // Woven sage-cream table runner across center
-  pxRect(ctx, tx + 4, ty + 20, tw - 8, 16, '#D8CCB8');
-  pxRect(ctx, tx + 4, ty + 22, tw - 8, 12, '#E9E0D0');
-  pxRect(ctx, tx + 4, ty + 26, tw - 8, 4, '#6E9183');
+  // Festive Christmas table runner (crimson, forest pine & warm gold trim across center)
+  pxRect(ctx, tx + 4, ty + 18, tw - 8, 20, '#E8C57B');
+  pxRect(ctx, tx + 4, ty + 20, tw - 8, 16, '#9B2C2C');
+  pxRect(ctx, tx + 4, ty + 23, tw - 8, 10, '#B91C1C');
+  pxRect(ctx, tx + 4, ty + 27, tw - 8, 2, '#2D6A4F');
 
-  // 4 Family ceramic place settings (plates + folded napkins)
+  // 4 Family ceramic place settings (plates + festive red/green napkins + cutlery)
   const plates = [
-    { px: tx + 19, py: ty + 8 },
-    { px: tx + tw - 31, py: ty + 8 },
-    { px: tx + 19, py: ty + th - 22 },
-    { px: tx + tw - 31, py: ty + th - 22 },
+    { px: tx + 16, py: ty + 6 },
+    { px: tx + tw - 28, py: ty + 6 },
+    { px: tx + 16, py: ty + th - 21 },
+    { px: tx + tw - 28, py: ty + th - 21 },
   ];
   for (const p of plates) {
-    pxRect(ctx, p.px, p.py, 12, 10, '#FAF6F0');
-    pxRect(ctx, p.px + 2, p.py + 2, 8, 6, '#ECE4D8');
-    pxRect(ctx, p.px + 13, p.py + 2, 3, 6, '#C97B56'); // Terracotta napkin
+    pxRect(ctx, p.px, p.py, 12, 9, '#FAF6F0');
+    pxRect(ctx, p.px + 2, p.py + 2, 8, 5, '#ECE4D8');
+    pxRect(ctx, p.px - 3, p.py + 2, 2, 5, '#CBD5E1'); // Silver fork
+    pxRect(ctx, p.px + 13, p.py + 2, 3, 5, '#B91C1C'); // Christmas crimson napkin
+    pxRect(ctx, p.px + 14, p.py + 4, 1, 1, '#2D6A4F'); // Holly accent
   }
 
-  // Centerpiece: ceramic wildflower vase & clear water pitcher
+  // =========================================================================
+  // GRAND CHRISTMAS ROAST TURKEY CENTERPIECE (ไก่งวงตัวใหญ่วางอยู่กลางโต๊ะ — สัญลักษณ์วันครอบครัวอบอุ่นในวันคริสต์มาส)
+  // =========================================================================
   const cx = tx + Math.floor(tw / 2);
-  const cy = ty + Math.floor(th / 2) - 4;
-  pxRect(ctx, cx - 10, cy - 4, 9, 10, '#5E8C7A'); // Ceramic vase
-  pxRect(ctx, cx - 8, cy - 8, 5, 5, '#4A7A59'); // Stems
-  pxRect(ctx, cx - 10, cy - 10, 3, 3, '#F6CF71'); // Yellow blossom
-  pxRect(ctx, cx - 5, cy - 9, 3, 3, '#FAF6F0'); // White blossom
-  pxRect(ctx, cx + 4, cy - 3, 8, 9, '#B7DCE6'); // Water pitcher
-  pxRect(ctx, cx + 6, cy - 1, 4, 5, '#E0F2F7');
+  const cy = ty + Math.floor(th / 2) - 2;
 
-  // 2 South tucked dining chairs (drawn cleanly in front of south apron)
-  drawDiningChair(ctx, tx + 13, ty + th - 9, 'north');
-  drawDiningChair(ctx, tx + tw - 37, ty + th - 9, 'north');
+  // Large oval silver/porcelain holiday serving platter
+  pxRect(ctx, cx - 17, cy - 8, 34, 17, 'rgba(35, 22, 14, 0.28)'); // Platter shadow
+  pxRect(ctx, cx - 16, cy - 9, 32, 17, '#CBD5E1'); // Silver rim outer
+  pxRect(ctx, cx - 14, cy - 10, 28, 19, '#E2E8F0');
+  pxRect(ctx, cx - 13, cy - 8, 26, 15, '#F8FAFC'); // Inner porcelain platter well
+
+  // Festive bed of evergreen rosemary, parsley & holly berries around the platter rim
+  const herbs = [
+    { hx: cx - 13, hy: cy - 4 },
+    { hx: cx - 12, hy: cy + 3 },
+    { hx: cx - 7, hy: cy + 5 },
+    { hx: cx + 4, hy: cy + 5 },
+    { hx: cx + 10, hy: cy + 2 },
+    { hx: cx + 10, hy: cy - 5 },
+    { hx: cx - 8, hy: cy - 8 },
+    { hx: cx + 5, hy: cy - 8 },
+  ];
+  for (const h of herbs) {
+    pxRect(ctx, h.hx, h.hy, 4, 3, '#2D6A4F');
+    pxRect(ctx, h.hx + 1, h.hy + 1, 2, 1, '#52B788');
+  }
+  // Bright red cranberries & golden roasted lemon/orange garnishes
+  pxRect(ctx, cx - 11, cy + 1, 2, 2, '#DC2626');
+  pxRect(ctx, cx - 4, cy + 6, 2, 2, '#DC2626');
+  pxRect(ctx, cx + 8, cy + 4, 2, 2, '#DC2626');
+  pxRect(ctx, cx + 11, cy - 2, 2, 2, '#DC2626');
+  pxRect(ctx, cx - 10, cy - 6, 3, 2, '#FACC15');
+  pxRect(ctx, cx + 7, cy + 5, 3, 2, '#F59E0B');
+
+  // Plump Golden-Brown Roasted Christmas Turkey Body
+  pxRect(ctx, cx - 10, cy - 7, 19, 13, '#7C3F19'); // Deep roasted base contour
+  pxRect(ctx, cx - 9, cy - 8, 17, 13, '#9A5223'); // Rich mahogany-brown roast skin
+  pxRect(ctx, cx - 8, cy - 7, 15, 11, '#B8682E'); // Golden basted breast
+  pxRect(ctx, cx - 6, cy - 6, 11, 8, '#D4833B'); // Honey-glazed top crown
+  pxRect(ctx, cx - 4, cy - 5, 7, 3, '#EBA254'); // Crispy golden skin highlight
+  pxRect(ctx, cx - 2, cy - 4, 4, 1, '#FDE68A'); // Warm butter glaze sheen
+
+  // Tucked roasted wings (top & bottom flanks)
+  pxRect(ctx, cx - 7, cy - 8, 8, 2, '#8C471D');
+  pxRect(ctx, cx - 6, cy + 3, 8, 3, '#8C471D');
+  pxRect(ctx, cx - 5, cy + 3, 6, 2, '#AD5F29');
+
+  // Two plump roasted drumsticks extending to the right with white paper chef frills (Manchettes)
+  // Upper drumstick
+  pxRect(ctx, cx + 5, cy - 6, 7, 4, '#8C471D');
+  pxRect(ctx, cx + 5, cy - 5, 6, 2, '#B8682E');
+  pxRect(ctx, cx + 11, cy - 6, 3, 3, '#FAF6F0'); // White paper frill cuff
+  pxRect(ctx, cx + 13, cy - 5, 2, 2, '#E2E8F0');
+  // Lower drumstick
+  pxRect(ctx, cx + 5, cy, 7, 5, '#8C471D');
+  pxRect(ctx, cx + 5, cy + 1, 6, 3, '#C27133');
+  pxRect(ctx, cx + 11, cy + 1, 3, 3, '#FAF6F0'); // White paper frill cuff
+  pxRect(ctx, cx + 13, cy + 2, 2, 2, '#E2E8F0');
+
+  // Warm Christmas candles & cranberry sauce bowls flanking the grand turkey platter
+  // Left holiday candle
+  pxRect(ctx, tx + 6, cy - 2, 5, 6, '#FAF6F0');
+  pxRect(ctx, tx + 5, cy + 3, 7, 2, '#E8C57B');
+  pxRect(ctx, tx + 8, cy - 5, 2, 3, Math.floor(tick / 9) % 2 === 0 ? '#FACC15' : '#FB923C');
+  // Right small cranberry gravy boat
+  pxRect(ctx, tx + tw - 13, cy - 1, 7, 6, '#FAF6F0');
+  pxRect(ctx, tx + tw - 12, cy, 5, 3, '#991B1B');
+
+  // Gentle aromatic warm steam rising from the freshly roasted Christmas turkey
+  const steamPhase = Math.floor(tick / 12) % 4;
+  pxRect(
+    ctx,
+    cx - 4 + (steamPhase % 2),
+    cy - 12 - steamPhase,
+    2,
+    3,
+    'rgba(255, 250, 240, 0.72)'
+  );
+  pxRect(
+    ctx,
+    cx + 2 - (steamPhase % 2),
+    cy - 14 - ((steamPhase + 2) % 4),
+    2,
+    3,
+    'rgba(255, 250, 240, 0.58)'
+  );
+  pxRect(
+    ctx,
+    cx + 7,
+    cy - 11 - ((steamPhase + 1) % 3),
+    2,
+    2,
+    'rgba(255, 250, 240, 0.48)'
+  );
 }
 
 export function drawBathroomFurniture(

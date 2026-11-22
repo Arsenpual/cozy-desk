@@ -1,4 +1,4 @@
-import type { InteractableObject, Rect, RoomZone } from '../types/game';
+import type { DiningChairSeatId, FacingDirection, InteractableObject, Rect, RoomZone } from '../types/game';
 
 export const TILE = 32;
 // Asymmetric floorplan: Home Office (upper-right) is expanded +50% wider (12 interior cols: 11..22)
@@ -112,6 +112,68 @@ export const KITCHEN_DINING_RECT: Rect = {
   h: 1.85 * TILE,
 };
 
+export interface DiningChairSpot {
+  seatPos: { x: number; y: number };
+  standPos: { x: number; y: number };
+  facing: FacingDirection;
+}
+
+export const DINING_CHAIR_SPOTS: Record<DiningChairSeatId, DiningChairSpot> = {
+  dining_chair_nw: {
+    seatPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) - 1,
+    },
+    standPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) - 24,
+    },
+    facing: 'down',
+  },
+  dining_chair_ne: {
+    seatPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + Math.round(KITCHEN_DINING_RECT.w) - 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) - 1,
+    },
+    standPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + Math.round(KITCHEN_DINING_RECT.w) - 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) - 24,
+    },
+    facing: 'down',
+  },
+  dining_chair_sw: {
+    seatPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) + Math.round(KITCHEN_DINING_RECT.h) + 1,
+    },
+    standPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) + Math.round(KITCHEN_DINING_RECT.h) + 24,
+    },
+    facing: 'up',
+  },
+  dining_chair_se: {
+    seatPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + Math.round(KITCHEN_DINING_RECT.w) - 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) + Math.round(KITCHEN_DINING_RECT.h) + 1,
+    },
+    standPos: {
+      x: Math.round(KITCHEN_DINING_RECT.x) + Math.round(KITCHEN_DINING_RECT.w) - 25,
+      y: Math.round(KITCHEN_DINING_RECT.y) + Math.round(KITCHEN_DINING_RECT.h) + 24,
+    },
+    facing: 'up',
+  },
+};
+
+export function isDiningChairSeatId(id: string | null | undefined): id is DiningChairSeatId {
+  return (
+    id === 'dining_chair_nw' ||
+    id === 'dining_chair_ne' ||
+    id === 'dining_chair_sw' ||
+    id === 'dining_chair_se'
+  );
+}
+
 // Mina's own workstation swivel chair in the dedicated East AI Suite of the expanded Home Office
 export const MINA_POS = {
   x: 20.72 * TILE,
@@ -129,10 +191,14 @@ export const AGY_STAND_POS = {
 };
 
 // Tight proximity thresholds around Mina's desk (must be inside radius to access Mina)
-export const MINA_APPROACH_RADIUS = 76;
-export const MINA_LEAVE_RADIUS = 88;
-export const MINA_MAX_ROAM_RADIUS = 50;
+export const MINA_APPROACH_RADIUS = 52;
+export const MINA_LEAVE_RADIUS = 64;
+export const MINA_MAX_ROAM_RADIUS = 40;
 export const MINA_GREET_STOP_DIST = 28;
+
+// Tight proximity thresholds around Antigravity's localhost station (must be inside radius to engage & access)
+export const AGY_APPROACH_RADIUS = 52;
+export const AGY_LEAVE_RADIUS = 64;
 
 // Clear walkable route to stand directly in front of the unobstructed north-west Office Pinboard
 export const MINA_AISLE_X = 19.65 * TILE;
@@ -371,6 +437,61 @@ export const INTERACTABLES: InteractableObject[] = [
     h: 1.95 * TILE,
     interactRadius: 76,
   },
+  {
+    id: 'dining_chair_nw',
+    zone: 'kitchen',
+    label: 'เก้าอี้โต๊ะอาหาร (บนซ้าย)',
+    actionLabel: 'นั่งเก้าอี้โต๊ะอาหาร',
+    x: Math.round(KITCHEN_DINING_RECT.x) + 12,
+    y: Math.round(KITCHEN_DINING_RECT.y) - 13,
+    w: 26,
+    h: 22,
+    interactRadius: 56,
+  },
+  {
+    id: 'dining_chair_ne',
+    zone: 'kitchen',
+    label: 'เก้าอี้โต๊ะอาหาร (บนขวา)',
+    actionLabel: 'นั่งเก้าอี้โต๊ะอาหาร',
+    x: Math.round(KITCHEN_DINING_RECT.x) + Math.round(KITCHEN_DINING_RECT.w) - 38,
+    y: Math.round(KITCHEN_DINING_RECT.y) - 13,
+    w: 26,
+    h: 22,
+    interactRadius: 56,
+  },
+  {
+    id: 'dining_chair_sw',
+    zone: 'kitchen',
+    label: 'เก้าอี้โต๊ะอาหาร (ล่างซ้าย)',
+    actionLabel: 'นั่งเก้าอี้โต๊ะอาหาร',
+    x: Math.round(KITCHEN_DINING_RECT.x) + 12,
+    y: Math.round(KITCHEN_DINING_RECT.y) + Math.round(KITCHEN_DINING_RECT.h) - 10,
+    w: 26,
+    h: 23,
+    interactRadius: 56,
+  },
+  {
+    id: 'dining_chair_se',
+    zone: 'kitchen',
+    label: 'เก้าอี้โต๊ะอาหาร (ล่างขวา)',
+    actionLabel: 'นั่งเก้าอี้โต๊ะอาหาร',
+    x: Math.round(KITCHEN_DINING_RECT.x) + Math.round(KITCHEN_DINING_RECT.w) - 38,
+    y: Math.round(KITCHEN_DINING_RECT.y) + Math.round(KITCHEN_DINING_RECT.h) - 10,
+    w: 26,
+    h: 23,
+    interactRadius: 56,
+  },
+  {
+    id: 'dining_table',
+    zone: 'kitchen',
+    label: 'โต๊ะอาหารคริสต์มาสครอบครัว',
+    actionLabel: 'ฉลองมื้อไก่งวงคริสต์มาส',
+    x: KITCHEN_DINING_RECT.x,
+    y: KITCHEN_DINING_RECT.y,
+    w: KITCHEN_DINING_RECT.w,
+    h: KITCHEN_DINING_RECT.h,
+    interactRadius: 72,
+  },
 ];
 
 export function getRoomZone(x: number, y = 0): RoomZone {
@@ -428,6 +549,20 @@ export function findNearestInteractable(px: number, py: number): InteractableObj
 }
 
 export function getInteractableAtPoint(wx: number, wy: number): InteractableObject | null {
+  let best: InteractableObject | null = null;
+  let bestArea = Infinity;
+
+  for (const item of INTERACTABLES) {
+    if (wx >= item.x - 4 && wx <= item.x + item.w + 4 && wy >= item.y - 4 && wy <= item.y + item.h + 4) {
+      const area = item.w * item.h;
+      if (area < bestArea) {
+        bestArea = area;
+        best = item;
+      }
+    }
+  }
+  if (best) return best;
+
   for (const item of INTERACTABLES) {
     if (wx >= item.x - 8 && wx <= item.x + item.w + 8 && wy >= item.y - 8 && wy <= item.y + item.h + 8) {
       return item;

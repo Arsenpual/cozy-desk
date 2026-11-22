@@ -78,7 +78,13 @@ export interface ChatTaskProposal {
   errorMessage?: string;
 }
 
-export type PlayerSeatId = 'workdesk' | 'sofa';
+export type DiningChairSeatId =
+  | 'dining_chair_nw'
+  | 'dining_chair_ne'
+  | 'dining_chair_sw'
+  | 'dining_chair_se';
+
+export type PlayerSeatId = 'workdesk' | 'sofa' | DiningChairSeatId;
 
 export type SofaActivity = 'tea' | 'newspaper' | 'tv_remote';
 
@@ -95,7 +101,9 @@ export type InteractableId =
   | 'workdesk'
   | 'drive_table'
   | 'mina_desk'
-  | 'antigravity_desk';
+  | 'antigravity_desk'
+  | 'dining_table'
+  | DiningChairSeatId;
 
 export type AntigravityMode = 'code' | 'workspace' | 'arch';
 
