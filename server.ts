@@ -48,12 +48,64 @@ interface IncomingTasksContext {
   errorDetail?: string;
 }
 
+interface SleepStageMetricServer {
+  minutes: number;
+  durationText: string;
+  percent: number | null;
+  status: string | null;
+  referenceRange: string | null;
+}
+
+interface SleepAiAnalysisServer {
+  summary: string;
+  strengths: string[];
+  concerns: string[];
+  actionableTips: string[];
+  circadianNote: string;
+  analyzedAt: string;
+  model: string;
+}
+
+interface DailySleepRecordServer {
+  id: string;
+  date: string;
+  dateLabel: string;
+  sourceApp: string;
+  userLabel: string | null;
+  sleepScore: number | null;
+  percentileBeat: number | null;
+  bedtime: string | null;
+  wakeTime: string | null;
+  totalSleepMinutes: number | null;
+  totalSleepText: string | null;
+  totalSleepStatus: string | null;
+  totalSleepReference: string | null;
+  stages: {
+    deep: SleepStageMetricServer;
+    light: SleepStageMetricServer;
+    rem: SleepStageMetricServer;
+  };
+  deepSleepContinuityScore: number | null;
+  deepSleepContinuityStatus: string | null;
+  awakeCount: number | null;
+  awakeStatus: string | null;
+  breathingQualityScore: number | null;
+  breathingQualityStatus: string | null;
+  previousDayStressScore: number | null;
+  appInsights: string[];
+  appRecommendation: string | null;
+  aiAnalysis?: SleepAiAnalysisServer | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ChatRequestBody {
   messages?: IncomingMessage[];
   mode?: WorkMode;
   timeOfDay?: TimeOfDay;
   localDate?: string;
   tasksContext?: IncomingTasksContext;
+  sleepLogsContext?: DailySleepRecordServer[];
 }
 
 interface AntigravityChatRequestBody {
@@ -705,11 +757,58 @@ function formatGoogleTasksContext(
     .join('\n');
 }
 
+function formatSleepLogsContext(sleepLogs: DailySleepRecordServer[] | undefined): string {
+  const logs = Array.isArray(sleepLogs) ? sleepLogs.slice(0, 7) : [];
+  if (logs.length === 0) {
+    return [
+      'ข้อมูลบันทึกการนอนประจำวัน (จากภารกิจในห้องนอน): ยังไม่มีข้อมูลการนอนที่บันทึกไว้',
+      '- หากผู้ใช้ถามถึงคุณภาพการนอน ให้แนะนำว่าสามารถเดินไปที่โต๊ะข้างเตียงฝั่งขวาในห้องนอนใหญ่เพื่ออัปโหลดภาพสถิติการนอนแปลงเป็นไฟล์ .json ให้ AI วิเคราะห์ได้เลย',
+    ].join('\n');
+  }
+
+  const lines = logs.map((log) => {
+    const dur =
+      log.totalSleepText ||
+      (typeof log.totalSleepMinutes === 'number'
+        ? `${Math.floor(log.totalSleepMinutes / 60)} ชม. ${log.totalSleepMinutes % 60} นาที`
+        : 'ไม่ระบุ');
+    const score = typeof log.sleepScore === 'number' ? `${log.sleepScore} คะแนน` : 'ไม่ระบุคะแนน';
+    const windowStr =
+      log.bedtime && log.wakeTime ? `เวลานอน ${log.bedtime}–${log.wakeTime}` : 'ไม่ระบุช่วงเวลา';
+    const deepStr =
+      log.stages?.deep?.percent != null
+        ? `หลับลึก ${log.stages.deep.percent}% (${log.stages.deep.durationText || `${log.stages.deep.minutes}น.`})`
+        : '';
+    const lightStr =
+      log.stages?.light?.percent != null ? `หลับตื้น ${log.stages.light.percent}%` : '';
+    const remStr = log.stages?.rem?.percent != null ? `REM ${log.stages.rem.percent}%` : '';
+    const breathStr =
+      typeof log.breathingQualityScore === 'number'
+        ? `การหายใจ ${log.breathingQualityScore}`
+        : '';
+    const stressStr =
+      typeof log.previousDayStressScore === 'number'
+        ? `ความเครียดวันก่อน ${log.previousDayStressScore}`
+        : '';
+    const metrics = [score, dur, windowStr, deepStr, lightStr, remStr, breathStr, stressStr]
+      .filter(Boolean)
+      .join(' | ');
+    return `- วันที่ ${log.date} (${log.dateLabel || log.date}, ${log.sourceApp || 'Health App'}): ${metrics}`;
+  });
+
+  return [
+    `ข้อมูลบันทึกการนอนประจำวันจริง (.json จากภารกิจในห้องนอนล่าสุด ${logs.length} วัน):`,
+    ...lines,
+    '- หากผู้ใช้ถามเรื่องการนอน สุขภาพการพักผ่อน หรือขอให้ช่วยวางแผนเวลาทำงานให้สอดคล้องกับการนอน สามารถอ้างอิงตัวเลขจริงด้านบนและให้คำแนะนำอย่างอบอุ่นได้ทันที',
+  ].join('\n');
+}
+
 function buildSystemInstruction(
   mode: WorkMode,
   timeOfDay: TimeOfDay,
   localDate: string,
-  tasksContext?: IncomingTasksContext
+  tasksContext?: IncomingTasksContext,
+  sleepLogsContext?: DailySleepRecordServer[]
 ): string {
   const timeContext: Record<TimeOfDay, string> = {
     morning: 'ตอนนี้เป็นช่วงเช้าในบ้าน บรรยากาศสดใสเหมาะกับการวางแผนและเริ่มงาน',
@@ -753,6 +852,7 @@ function buildSystemInstruction(
       '- หากผู้ใช้เพียงถาม-ตอบ ถามดูรายการงานที่มีอยู่ คิดไอเดีย หรือร่างเอกสารทั่วไปโดยไม่ได้สั่งเพิ่มงานใหม่ลง Google Tasks ห้ามเรียกเครื่องมือ `propose_google_task`',
     ].join('\n'),
     formatGoogleTasksContext(tasksContext, localDate),
+    formatSleepLogsContext(sleepLogsContext),
     modeGuidance[mode] ?? modeGuidance.qa,
   ].join('\n\n');
 }
@@ -829,17 +929,625 @@ function classifyGeminiError(err: unknown): { status: number; message: string; c
   };
 }
 
+const SLEEP_DATA_DIR = path.resolve(__dirname, 'data');
+const SLEEP_LOGS_FILE = path.join(SLEEP_DATA_DIR, 'sleep-logs.json');
+
+function toFiniteNumberOrNull(val: unknown): number | null {
+  if (typeof val === 'number' && Number.isFinite(val)) return val;
+  if (typeof val === 'string' && val.trim() !== '') {
+    const parsed = Number(val.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function toCleanStringOrNull(val: unknown, maxLen = 240): string | null {
+  if (typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  return trimmed ? trimmed.slice(0, maxLen) : null;
+}
+
+function sanitizeSleepStage(raw: unknown): SleepStageMetricServer {
+  const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const minutes = Math.max(0, Math.round(toFiniteNumberOrNull(obj.minutes) ?? 0));
+  const hrs = Math.floor(minutes / 60);
+  const remMins = minutes % 60;
+  const fallbackText =
+    minutes > 0
+      ? hrs > 0
+        ? `${hrs} ชั่วโมง ${remMins} นาที`
+        : `${remMins} นาที`
+      : '';
+  return {
+    minutes,
+    durationText: toCleanStringOrNull(obj.durationText, 80) ?? fallbackText,
+    percent: toFiniteNumberOrNull(obj.percent),
+    status: toCleanStringOrNull(obj.status, 40),
+    referenceRange: toCleanStringOrNull(obj.referenceRange, 60),
+  };
+}
+
+function sanitizeSleepRecord(
+  raw: unknown,
+  fallbackDate = new Date().toISOString().slice(0, 10)
+): DailySleepRecordServer {
+  const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const nowIso = new Date().toISOString();
+  const rawDate = toCleanStringOrNull(obj.date, 20);
+  const date = rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : fallbackDate;
+  const id =
+    toCleanStringOrNull(obj.id, 80) ??
+    `sleep_${date}_${Date.now().toString(36)}`;
+  const stagesObj =
+    obj.stages && typeof obj.stages === 'object'
+      ? (obj.stages as Record<string, unknown>)
+      : {};
+  const deep = sanitizeSleepStage(stagesObj.deep);
+  const light = sanitizeSleepStage(stagesObj.light);
+  const rem = sanitizeSleepStage(stagesObj.rem);
+
+  const stageSum = deep.minutes + light.minutes + rem.minutes;
+  const totalSleepMinutes =
+    toFiniteNumberOrNull(obj.totalSleepMinutes) ?? (stageSum > 0 ? stageSum : null);
+
+  const rawInsights = Array.isArray(obj.appInsights)
+    ? obj.appInsights
+        .map((s) => toCleanStringOrNull(s, 400))
+        .filter((s): s is string => Boolean(s))
+        .slice(0, 8)
+    : [];
+
+  let aiAnalysis: SleepAiAnalysisServer | null = null;
+  if (obj.aiAnalysis && typeof obj.aiAnalysis === 'object') {
+    const a = obj.aiAnalysis as Record<string, unknown>;
+    const summary = toCleanStringOrNull(a.summary, 1200);
+    if (summary) {
+      aiAnalysis = {
+        summary,
+        strengths: Array.isArray(a.strengths)
+          ? a.strengths
+              .map((s) => toCleanStringOrNull(s, 300))
+              .filter((s): s is string => Boolean(s))
+              .slice(0, 6)
+          : [],
+        concerns: Array.isArray(a.concerns)
+          ? a.concerns
+              .map((s) => toCleanStringOrNull(s, 300))
+              .filter((s): s is string => Boolean(s))
+              .slice(0, 6)
+          : [],
+        actionableTips: Array.isArray(a.actionableTips)
+          ? a.actionableTips
+              .map((s) => toCleanStringOrNull(s, 300))
+              .filter((s): s is string => Boolean(s))
+              .slice(0, 6)
+          : [],
+        circadianNote: toCleanStringOrNull(a.circadianNote, 500) ?? '',
+        analyzedAt: toCleanStringOrNull(a.analyzedAt, 40) ?? nowIso,
+        model: toCleanStringOrNull(a.model, 60) ?? 'gemini-4-hydrogen',
+      };
+    }
+  }
+
+  return {
+    id,
+    date,
+    dateLabel: toCleanStringOrNull(obj.dateLabel, 60) ?? date,
+    sourceApp: toCleanStringOrNull(obj.sourceApp, 80) ?? 'Health App',
+    userLabel: toCleanStringOrNull(obj.userLabel, 80),
+    sleepScore: toFiniteNumberOrNull(obj.sleepScore),
+    percentileBeat: toFiniteNumberOrNull(obj.percentileBeat),
+    bedtime: toCleanStringOrNull(obj.bedtime, 20),
+    wakeTime: toCleanStringOrNull(obj.wakeTime, 20),
+    totalSleepMinutes,
+    totalSleepText:
+      toCleanStringOrNull(obj.totalSleepText, 80) ??
+      (totalSleepMinutes != null
+        ? `${Math.floor(totalSleepMinutes / 60)} ชั่วโมง ${totalSleepMinutes % 60} นาที`
+        : null),
+    totalSleepStatus: toCleanStringOrNull(obj.totalSleepStatus, 40),
+    totalSleepReference: toCleanStringOrNull(obj.totalSleepReference, 60),
+    stages: { deep, light, rem },
+    deepSleepContinuityScore: toFiniteNumberOrNull(obj.deepSleepContinuityScore),
+    deepSleepContinuityStatus: toCleanStringOrNull(obj.deepSleepContinuityStatus, 40),
+    awakeCount: toFiniteNumberOrNull(obj.awakeCount),
+    awakeStatus: toCleanStringOrNull(obj.awakeStatus, 40),
+    breathingQualityScore: toFiniteNumberOrNull(obj.breathingQualityScore),
+    breathingQualityStatus: toCleanStringOrNull(obj.breathingQualityStatus, 40),
+    previousDayStressScore: toFiniteNumberOrNull(obj.previousDayStressScore),
+    appInsights: rawInsights,
+    appRecommendation: toCleanStringOrNull(obj.appRecommendation, 450),
+    aiAnalysis,
+    createdAt: toCleanStringOrNull(obj.createdAt, 40) ?? nowIso,
+    updatedAt: nowIso,
+  };
+}
+
+async function readSleepLogsFromDisk(): Promise<DailySleepRecordServer[]> {
+  try {
+    const raw = await fs.readFile(SLEEP_LOGS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => sanitizeSleepRecord(item))
+      .sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
+  } catch {
+    return [];
+  }
+}
+
+async function writeSleepLogsToDisk(logs: DailySleepRecordServer[]): Promise<void> {
+  await fs.mkdir(SLEEP_DATA_DIR, { recursive: true });
+  const sorted = [...logs].sort(
+    (a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt)
+  );
+  await fs.writeFile(SLEEP_LOGS_FILE, `${JSON.stringify(sorted, null, 2)}\n`, 'utf8');
+}
+
+const SLEEP_EXTRACT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    date: {
+      type: Type.STRING,
+      description: 'Sleep date in YYYY-MM-DD format. If only day/month shown, infer year from defaultDate.',
+    },
+    dateLabel: {
+      type: Type.STRING,
+      description: 'Original date label displayed in screenshot, e.g. "ศ. 20 พ.ย.".',
+    },
+    sourceApp: {
+      type: Type.STRING,
+      description: 'Name of the health app, e.g. "Huawei Health", "Apple Health", "Samsung Health", "Garmin Connect".',
+    },
+    userLabel: {
+      type: Type.STRING,
+      description: 'Profile/user identifier shown at top if visible, else empty string.',
+    },
+    sleepScore: {
+      type: Type.NUMBER,
+      description: 'Overall sleep score (0-100), or -1 if not present.',
+    },
+    percentileBeat: {
+      type: Type.NUMBER,
+      description: 'Percentage of users outperformed (e.g. 99 from "ดีกว่า 99% ของผู้ใช้"), or -1 if not present.',
+    },
+    bedtime: {
+      type: Type.STRING,
+      description: 'Sleep start time in 24-hour HH:mm format (e.g. "06:43"), or empty string.',
+    },
+    wakeTime: {
+      type: Type.STRING,
+      description: 'Wake-up time in 24-hour HH:mm format (e.g. "14:47"), or empty string.',
+    },
+    totalSleepMinutes: {
+      type: Type.NUMBER,
+      description: 'Total sleep duration converted to total integer minutes (e.g. 7h 46m -> 466).',
+    },
+    totalSleepText: {
+      type: Type.STRING,
+      description: 'Human readable total sleep text, e.g. "7 ชั่วโมง 46 นาที".',
+    },
+    totalSleepStatus: {
+      type: Type.STRING,
+      description: 'Status label for total sleep, e.g. "ปกติ", "ต่ำ", "สูง".',
+    },
+    totalSleepReference: {
+      type: Type.STRING,
+      description: 'Reference range for total sleep, e.g. "6–10 ชม.".',
+    },
+    deepMinutes: { type: Type.NUMBER, description: 'Deep sleep duration in minutes.' },
+    deepText: { type: Type.STRING, description: 'Deep sleep duration text, e.g. "2 ชั่วโมง 7 นาที".' },
+    deepPercent: { type: Type.NUMBER, description: 'Deep sleep percentage (0-100), or -1 if absent.' },
+    deepStatus: { type: Type.STRING, description: 'Deep sleep status label, e.g. "ปกติ".' },
+    deepReference: { type: Type.STRING, description: 'Deep sleep reference range, e.g. "20–60%".' },
+    lightMinutes: { type: Type.NUMBER, description: 'Light sleep duration in minutes.' },
+    lightText: { type: Type.STRING, description: 'Light sleep duration text, e.g. "3 ชั่วโมง 59 นาที".' },
+    lightPercent: { type: Type.NUMBER, description: 'Light sleep percentage (0-100), or -1 if absent.' },
+    lightStatus: { type: Type.STRING, description: 'Light sleep status label, e.g. "ปกติ".' },
+    lightReference: { type: Type.STRING, description: 'Light sleep reference range, e.g. "<55%".' },
+    remMinutes: { type: Type.NUMBER, description: 'REM sleep duration in minutes.' },
+    remText: { type: Type.STRING, description: 'REM sleep duration text, e.g. "1 ชั่วโมง 40 นาที".' },
+    remPercent: { type: Type.NUMBER, description: 'REM sleep percentage (0-100), or -1 if absent.' },
+    remStatus: { type: Type.STRING, description: 'REM sleep status label, e.g. "ปกติ".' },
+    remReference: { type: Type.STRING, description: 'REM sleep reference range, e.g. "10–30%".' },
+    deepSleepContinuityScore: {
+      type: Type.NUMBER,
+      description: 'Deep sleep continuity score (0-100), or -1 if absent.',
+    },
+    deepSleepContinuityStatus: { type: Type.STRING, description: 'Status label for continuity.' },
+    awakeCount: { type: Type.NUMBER, description: 'Number of awakenings, or -1 if absent.' },
+    awakeStatus: { type: Type.STRING, description: 'Status label for awakenings.' },
+    breathingQualityScore: {
+      type: Type.NUMBER,
+      description: 'Breathing quality score (0-100), or -1 if absent.',
+    },
+    breathingQualityStatus: { type: Type.STRING, description: 'Status label for breathing quality.' },
+    previousDayStressScore: {
+      type: Type.NUMBER,
+      description: 'Stress score mentioned in the screenshot or insights (e.g. 76), or -1 if absent.',
+    },
+    appInsights: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'Bullet-point analysis texts shown in the health app screenshot.',
+    },
+    appRecommendation: {
+      type: Type.STRING,
+      description: 'Highlighted tip or recommendation box shown in the health app screenshot.',
+    },
+  },
+  required: ['date', 'sourceApp', 'totalSleepMinutes'],
+};
+
+const SLEEP_ANALYZE_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    summary: {
+      type: Type.STRING,
+      description: 'Concise, warm executive summary in Thai (2-3 sentences) evaluating overall sleep recovery and trends.',
+    },
+    strengths: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: '2-3 specific strengths backed by actual numbers from the JSON sleep data.',
+    },
+    concerns: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: '1-3 specific concerns or watchpoints (e.g., daytime bedtime shift, elevated stress, short deep/REM sleep, awakenings).',
+    },
+    circadianNote: {
+      type: Type.STRING,
+      description: 'Specific observation about bedtime/wake-time circadian alignment and light exposure advice in Thai.',
+    },
+    actionableTips: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: '3 concrete, practical habits for tonight/tomorrow tailored to this user metrics in Thai.',
+    },
+  },
+  required: ['summary', 'strengths', 'concerns', 'circadianNote', 'actionableTips'],
+};
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '15mb' }));
 
   app.get('/api/health', (_req, res) => {
     res.json({
       ok: true,
       model: PRIMARY_MODEL,
     });
+  });
+
+  // =========================================================================
+  // BEDROOM SLEEP QUEST: Daily JSON Storage, Vision Extraction & AI Analysis
+  // =========================================================================
+  app.get('/api/sleep/logs', async (_req, res) => {
+    try {
+      const logs = await readSleepLogsFromDisk();
+      res.json({ ok: true, logs });
+    } catch (err) {
+      console.error('Failed to read sleep logs:', err);
+      res.status(500).json({ error: 'ไม่สามารถอ่านคลังข้อมูลการนอนได้' });
+    }
+  });
+
+  app.post('/api/sleep/logs', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { record?: unknown };
+      if (!body.record || typeof body.record !== 'object') {
+        res.status(400).json({ error: 'ข้อมูลการนอนไม่ถูกต้อง' });
+        return;
+      }
+      const cleanRecord = sanitizeSleepRecord(body.record);
+      const existing = await readSleepLogsFromDisk();
+      const filtered = existing.filter((item) => item.id !== cleanRecord.id);
+      const updated = [cleanRecord, ...filtered];
+      await writeSleepLogsToDisk(updated);
+      res.json({ ok: true, record: cleanRecord, logs: updated });
+    } catch (err) {
+      console.error('Failed to save sleep log:', err);
+      res.status(500).json({ error: 'ไม่สามารถบันทึกไฟล์ข้อมูลการนอนได้' });
+    }
+  });
+
+  app.delete('/api/sleep/logs/:id', async (req, res) => {
+    try {
+      const targetId = String(req.params.id || '').trim();
+      if (!targetId) {
+        res.status(400).json({ error: 'ไม่พบรหัสบันทึกการนอน' });
+        return;
+      }
+      const existing = await readSleepLogsFromDisk();
+      const updated = existing.filter((item) => item.id !== targetId);
+      await writeSleepLogsToDisk(updated);
+      res.json({ ok: true, logs: updated });
+    } catch (err) {
+      console.error('Failed to delete sleep log:', err);
+      res.status(500).json({ error: 'ไม่สามารถลบบันทึกการนอนได้' });
+    }
+  });
+
+  app.post('/api/sleep/extract', async (req, res) => {
+    const body = (req.body ?? {}) as {
+      imageBase64?: unknown;
+      mimeType?: unknown;
+      defaultDate?: unknown;
+    };
+
+    const imageBase64 = typeof body.imageBase64 === 'string' ? body.imageBase64.trim() : '';
+    const mimeType = typeof body.mimeType === 'string' ? body.mimeType.trim() : 'image/jpeg';
+    const defaultDate =
+      typeof body.defaultDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.defaultDate.trim())
+        ? body.defaultDate.trim()
+        : new Date().toISOString().slice(0, 10);
+
+    const allowedMimes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!imageBase64 || imageBase64.length < 100 || !allowedMimes.has(mimeType)) {
+      res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์รูปภาพ (.jpg, .png หรือ .webp) ที่ชัดเจนครับ' });
+      return;
+    }
+
+    let geminiClient: GoogleGenAI;
+    try {
+      geminiClient = createGeminiClient();
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      res.status(classified.status).json({ error: classified.message });
+      return;
+    }
+
+    const extractPrompt = [
+      'คุณคือระบบสกัดข้อมูลสุขภาพการนอน (Sleep Data OCR & Structured JSON Parser) ที่แม่นยำสูง',
+      `วันที่อ้างอิงปัจจุบันคือ ${defaultDate} (ใช้ปี ค.ศ. จากวันที่อ้างอิงนี้หากในรูปแสดงเฉพาะวัน/เดือน เช่น "ศ. 20 พ.ย." หรือ "11/20")`,
+      'จงอ่านข้อมูลทุกตัวเลขและข้อความจากภาพหน้าจอแอพสุขภาพการนอนนี้ (เช่น Huawei Health, Apple Health, Samsung Health, Garmin, Mi Fitness, Zepp) แล้วแปลงเป็น JSON ตาม Schema ที่กำหนดอย่างครบถ้วน:',
+      '- แปลงระยะเวลาแต่ละช่วง (เช่น "7 ชั่วโมง 46 นาที" = 466, "2 ชั่วโมง 7 นาที" = 127, "3 ชั่วโมง 59 นาที" = 239, "1 ชั่วโมง 40 นาที" = 100) ให้เป็นจำนวนนาทีที่ถูกต้องเป๊ะ',
+      '- ดึงเวลานอน (bedtime) และเวลาตื่น (wakeTime) ในรูปแบบ 24 ชั่วโมง HH:mm เช่น "06:43" และ "14:47"',
+      '- ดึงคะแนนการนอน (sleepScore), เปอร์เซ็นไทล์ (percentileBeat), เปอร์เซ็นต์และสถานะของแต่ละช่วง (deep / light / rem), ความต่อเนื่องของการนอนหลับลึก (deepSleepContinuityScore), จำนวนครั้งที่ตื่น (awakeCount), และคุณภาพการหายใจ (breathingQualityScore)',
+      '- หากในส่วน "การวิเคราะห์และคำแนะนำ" มีระบุค่าความเครียดของวันก่อนหน้า (เช่น "ระดับความเครียดของคุณคือ 76") ให้สกัดตัวเลขใส่ previousDayStressScore ด้วย',
+      '- ดึงข้อความคำวิเคราะห์ (appInsights) และคำแนะนำ (appRecommendation) ออกมาให้ครบถ้วนโดยไม่แต่งเติม',
+      '- สำหรับฟิลด์ตัวเลขที่ไม่มีในรูปให้ใส่ -1 และข้อความที่ไม่มีให้ใส่ "" (ห้ามเดาตัวเลขเอง)',
+    ].join('\n');
+
+    const runExtract = async (modelName: string) => {
+      const response = await geminiClient.models.generateContent({
+        model: modelName,
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType,
+                data: imageBase64,
+              },
+            },
+            { text: extractPrompt },
+          ],
+        },
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: SLEEP_EXTRACT_RESPONSE_SCHEMA,
+          thinkingConfig:
+            modelName === 'gemini-4-hydrogen'
+              ? { thinkingLevel: ThinkingLevel.LOW }
+              : undefined,
+        },
+      });
+      return response;
+    };
+
+    try {
+      let usedModel = FALLBACK_MODEL; // 'gemini-4-hydrogen' for high-accuracy vision OCR
+      let response;
+      try {
+        response = await runExtract(FALLBACK_MODEL);
+      } catch (firstErr) {
+        const c = classifyGeminiError(firstErr);
+        if (c.status === 401 || c.status === 403) throw firstErr;
+        usedModel = PRIMARY_MODEL;
+        response = await runExtract(PRIMARY_MODEL);
+      }
+
+      const rawText = (response.text ?? '').trim();
+      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      const numOrNull = (v: unknown) => {
+        const n = toFiniteNumberOrNull(v);
+        return n !== null && n >= 0 ? n : null;
+      };
+
+      const extractedDate =
+        typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date.trim())
+          ? parsed.date.trim()
+          : defaultDate;
+
+      const record = sanitizeSleepRecord(
+        {
+          id: `sleep_${extractedDate}`,
+          date: extractedDate,
+          dateLabel: toCleanStringOrNull(parsed.dateLabel, 60) ?? extractedDate,
+          sourceApp: toCleanStringOrNull(parsed.sourceApp, 80) ?? 'Health App',
+          userLabel: toCleanStringOrNull(parsed.userLabel, 80),
+          sleepScore: numOrNull(parsed.sleepScore),
+          percentileBeat: numOrNull(parsed.percentileBeat),
+          bedtime: toCleanStringOrNull(parsed.bedtime, 20),
+          wakeTime: toCleanStringOrNull(parsed.wakeTime, 20),
+          totalSleepMinutes: numOrNull(parsed.totalSleepMinutes),
+          totalSleepText: toCleanStringOrNull(parsed.totalSleepText, 80),
+          totalSleepStatus: toCleanStringOrNull(parsed.totalSleepStatus, 40),
+          totalSleepReference: toCleanStringOrNull(parsed.totalSleepReference, 60),
+          stages: {
+            deep: {
+              minutes: numOrNull(parsed.deepMinutes) ?? 0,
+              durationText: toCleanStringOrNull(parsed.deepText, 80) ?? '',
+              percent: numOrNull(parsed.deepPercent),
+              status: toCleanStringOrNull(parsed.deepStatus, 40),
+              referenceRange: toCleanStringOrNull(parsed.deepReference, 60),
+            },
+            light: {
+              minutes: numOrNull(parsed.lightMinutes) ?? 0,
+              durationText: toCleanStringOrNull(parsed.lightText, 80) ?? '',
+              percent: numOrNull(parsed.lightPercent),
+              status: toCleanStringOrNull(parsed.lightStatus, 40),
+              referenceRange: toCleanStringOrNull(parsed.lightReference, 60),
+            },
+            rem: {
+              minutes: numOrNull(parsed.remMinutes) ?? 0,
+              durationText: toCleanStringOrNull(parsed.remText, 80) ?? '',
+              percent: numOrNull(parsed.remPercent),
+              status: toCleanStringOrNull(parsed.remStatus, 40),
+              referenceRange: toCleanStringOrNull(parsed.remReference, 60),
+            },
+          },
+          deepSleepContinuityScore: numOrNull(parsed.deepSleepContinuityScore),
+          deepSleepContinuityStatus: toCleanStringOrNull(parsed.deepSleepContinuityStatus, 40),
+          awakeCount: numOrNull(parsed.awakeCount),
+          awakeStatus: toCleanStringOrNull(parsed.awakeStatus, 40),
+          breathingQualityScore: numOrNull(parsed.breathingQualityScore),
+          breathingQualityStatus: toCleanStringOrNull(parsed.breathingQualityStatus, 40),
+          previousDayStressScore: numOrNull(parsed.previousDayStressScore),
+          appInsights: Array.isArray(parsed.appInsights) ? parsed.appInsights : [],
+          appRecommendation: toCleanStringOrNull(parsed.appRecommendation, 450),
+        },
+        defaultDate
+      );
+
+      const usedTokens =
+        response.usageMetadata?.totalTokenCount ??
+        estimateFallbackTokens(extractPrompt.length + 1200, rawText.length);
+      recordTokenUsage(usedTokens);
+
+      res.json({ ok: true, record, model: usedModel });
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      console.error('Sleep screenshot extraction error:', classified.code, err);
+      res.status(classified.status).json({ error: classified.message });
+    }
+  });
+
+  app.post('/api/sleep/analyze', async (req, res) => {
+    const body = (req.body ?? {}) as {
+      targetRecord?: unknown;
+      historyRecords?: unknown;
+    };
+
+    if (!body.targetRecord || typeof body.targetRecord !== 'object') {
+      res.status(400).json({ error: 'กรุณาเลือกข้อมูลการนอนที่ต้องการวิเคราะห์' });
+      return;
+    }
+
+    const target = sanitizeSleepRecord(body.targetRecord);
+    const history = Array.isArray(body.historyRecords)
+      ? body.historyRecords
+          .slice(0, 14)
+          .map((r) => sanitizeSleepRecord(r))
+          .filter((r) => r.id !== target.id)
+      : [];
+
+    let geminiClient: GoogleGenAI;
+    try {
+      geminiClient = createGeminiClient();
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      res.status(classified.status).json({ error: classified.message });
+      return;
+    }
+
+    const analyzePrompt = [
+      'คุณคือผู้เชี่ยวชาญด้านเวชศาสตร์การนอนหลับและโค้ชสุขภาพประจำบ้าน Cozy Desk ที่อบอุ่นและวิเคราะห์เชิงลึกจากข้อมูลจริง',
+      'จงวิเคราะห์ข้อมูลการนอนในรูปแบบ JSON ด้านล่างเป็นภาษาไทยที่อ่านง่าย ตรงจุด และอ้างอิงตัวเลขจริง:',
+      '- ประเมินภาพรวมคะแนนการนอน ระยะเวลารวม และสัดส่วนการนอน (หลับลึก Deep / หลับตื้น Light / REM)',
+      '- สังเกตจังหวะนาฬิกาชีวภาพ (Circadian Rhythm) จากเวลาเข้านอน-ตื่นนอนอย่างละเอียด (เช่น หากนอนตอนเช้าและตื่นตอนบ่าย ให้วิเคราะห์ผลต่อฮอร์โมนเมลาโทนิน แสงแดด และแนะนำวิธีดูแลสุขภาพสำหรับคนนอนดึก/เข้ากะอย่างเข้าใจไม่ตัดสิน)',
+      '- พิจารณาความต่อเนื่องของการนอนหลับลึก คุณภาพการหายใจ จำนวนครั้งที่ตื่น และความเชื่อมโยงกับระดับความเครียดของวันก่อนหน้า (หากมี)',
+      '- หากมีประวัติการนอนย้อนหลังหลายวัน ให้เปรียบเทียบแนวโน้มด้วย',
+      '',
+      'ข้อมูลการนอนวันที่เลือก (.json):',
+      JSON.stringify({ ...target, aiAnalysis: undefined }, null, 2),
+      history.length > 0
+        ? `\nประวัติการนอนวันอื่นๆ ย้อนหลัง (${history.length} วัน):\n${JSON.stringify(
+            history.map((h) => ({
+              date: h.date,
+              sleepScore: h.sleepScore,
+              bedtime: h.bedtime,
+              wakeTime: h.wakeTime,
+              totalSleepMinutes: h.totalSleepMinutes,
+              deepPercent: h.stages.deep.percent,
+              remPercent: h.stages.rem.percent,
+              breathingQualityScore: h.breathingQualityScore,
+              previousDayStressScore: h.previousDayStressScore,
+            })),
+            null,
+            2
+          )}`
+        : '',
+    ].join('\n');
+
+    const runAnalyze = async (modelName: string) => {
+      return geminiClient.models.generateContent({
+        model: modelName,
+        contents: analyzePrompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: SLEEP_ANALYZE_RESPONSE_SCHEMA,
+          thinkingConfig:
+            modelName === 'gemini-4-hydrogen'
+              ? { thinkingLevel: ThinkingLevel.LOW }
+              : undefined,
+        },
+      });
+    };
+
+    try {
+      let usedModel = FALLBACK_MODEL;
+      let response;
+      try {
+        response = await runAnalyze(FALLBACK_MODEL);
+      } catch (firstErr) {
+        const c = classifyGeminiError(firstErr);
+        if (c.status === 401 || c.status === 403) throw firstErr;
+        usedModel = PRIMARY_MODEL;
+        response = await runAnalyze(PRIMARY_MODEL);
+      }
+
+      const rawText = (response.text ?? '').trim();
+      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      const analysis: SleepAiAnalysisServer = {
+        summary: toCleanStringOrNull(parsed.summary, 1200) ?? 'วิเคราะห์ข้อมูลการนอนเรียบร้อยแล้ว',
+        strengths: Array.isArray(parsed.strengths)
+          ? parsed.strengths
+              .map((s) => toCleanStringOrNull(s, 300))
+              .filter((s): s is string => Boolean(s))
+              .slice(0, 6)
+          : [],
+        concerns: Array.isArray(parsed.concerns)
+          ? parsed.concerns
+              .map((s) => toCleanStringOrNull(s, 300))
+              .filter((s): s is string => Boolean(s))
+              .slice(0, 6)
+          : [],
+        circadianNote: toCleanStringOrNull(parsed.circadianNote, 500) ?? '',
+        actionableTips: Array.isArray(parsed.actionableTips)
+          ? parsed.actionableTips
+              .map((s) => toCleanStringOrNull(s, 300))
+              .filter((s): s is string => Boolean(s))
+              .slice(0, 6)
+          : [],
+        analyzedAt: new Date().toISOString(),
+        model: usedModel,
+      };
+
+      const usedTokens =
+        response.usageMetadata?.totalTokenCount ??
+        estimateFallbackTokens(analyzePrompt.length, rawText.length);
+      recordTokenUsage(usedTokens);
+
+      res.json({ ok: true, analysis });
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      console.error('Sleep AI analysis error:', classified.code, err);
+      res.status(classified.status).json({ error: classified.message });
+    }
   });
 
   app.get('/api/characters/status', (_req, res) => {
@@ -1423,7 +2131,8 @@ async function startServer() {
         mode,
         timeOfDay,
         localDate,
-        effectiveTasksContext
+        effectiveTasksContext,
+        body.sleepLogsContext
       );
       let emittedAnyChunk = false;
       let emittedText = false;
@@ -1610,6 +2319,139 @@ async function startServer() {
       if (!res.writableEnded) {
         res.end();
       }
+    }
+  });
+
+  app.post('/api/assistant/execute-task', async (req, res) => {
+    const body = (req.body ?? {}) as {
+      title?: string;
+      notes?: string;
+      dueDate?: string;
+      scheduledTime?: string;
+      localDate?: string;
+      timeOfDay?: TimeOfDay;
+      sleepLogsContext?: DailySleepRecordServer[];
+    };
+
+    const rawTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+    if (!rawTitle) {
+      res.status(400).json({ error: 'กรุณาระบุชื่องานที่ต้องการให้มีน่าทำครับ' });
+      return;
+    }
+
+    const rawNotes = typeof body.notes === 'string' ? body.notes.trim().slice(0, 3000) : '';
+    const dueDate =
+      typeof body.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.dueDate.trim())
+        ? body.dueDate.trim()
+        : '';
+    const scheduledTime =
+      typeof body.scheduledTime === 'string' && /^\d{2}:\d{2}$/.test(body.scheduledTime.trim())
+        ? body.scheduledTime.trim()
+        : '';
+    const localDate =
+      typeof body.localDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.localDate.trim())
+        ? body.localDate.trim()
+        : new Date().toISOString().slice(0, 10);
+
+    let geminiClient: GoogleGenAI;
+    try {
+      geminiClient = createGeminiClient();
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      recordCharacterError('mina', classified.code, classified.message);
+      res.status(classified.status).json({ error: classified.message });
+      return;
+    }
+
+    const sleepSummaryBlock =
+      Array.isArray(body.sleepLogsContext) && body.sleepLogsContext.length > 0
+        ? `\nข้อมูลบันทึกการนอนล่าสุดของผู้ใช้ (ใช้ประกอบเฉพาะถ้างานเกี่ยวกับสุขภาพ/การนอน):\n${body.sleepLogsContext
+            .slice(0, 5)
+            .map(
+              (s) =>
+                `- ${s.date}: คะแนน ${s.sleepScore ?? '-'}, นอนรวม ${s.totalSleepText ?? `${s.totalSleepMinutes ?? '-'} นาที`}, เข้านอน ${s.bedtime ?? '-'} ตื่น ${s.wakeTime ?? '-'}`
+            )
+            .join('\n')}`
+        : '';
+
+    const systemInstruction = [
+      'คุณคือ "มีน่า (Mina)" ผู้ช่วย AI ประจำห้องทำงานในบ้าน Cozy Desk',
+      `วันที่ปัจจุบัน: ${localDate}`,
+      'ผู้ใช้ได้มอบหมายงานนี้ผ่านกระดาน Google Tasks แบบตั้งเวลา เพื่อให้คุณลงมือทำและเขียน "สรุปผลงาน" ลงในช่องโน้ตของ Task โดยผู้ใช้จะเป็นคนมาตรวจงานและติ๊กเสร็จด้วยตัวเอง',
+      'กติกาการเขียนสรุปผลงาน:',
+      '- ตอบเป็นภาษาไทยที่สุภาพ กระชับ ชัดเจน อ่านง่าย และนำไปใช้ต่อได้จริงทันที',
+      '- จัดโครงสร้างให้สแกนง่ายด้วยข้อย่อยสั้นๆ (ใช้ - หรือ 1. 2. 3.) หลีกเลี่ยงสัญลักษณ์ Markdown รกๆ เช่น ### หรือ ** จำนวนมาก เพราะจะถูกเขียนลงในโน้ตข้อความล้วนของ Google Tasks',
+      '- หากเป็นงานร่างข้อความ/อีเมล/ไอเดีย/วางแผน/สรุป ให้ลงมือทำเนื้อหาจริงให้เสร็จพร้อมตรวจ ไม่ใช่แค่บอกวิธีทำ',
+      '- ความยาวกระชับพอดีอ่านในโน้ต (ประมาณ 4–12 บรรทัด หรือไม่เกิน 1,500 ตัวอักษร)',
+      '- ปิดท้ายสั้นๆ 1 บรรทัดว่าพร้อมให้ตรวจงานและติ๊กเสร็จได้เมื่อพอใจ',
+      sleepSummaryBlock,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const userPrompt = [
+      `ชื่องาน (Task): ${rawTitle}`,
+      dueDate ? `กำหนดวันที่: ${dueDate}${scheduledTime ? ` เวลา ${scheduledTime} น.` : ''}` : '',
+      rawNotes ? `คำสั่งและรายละเอียดจากผู้ใช้:\n${rawNotes}` : 'คำสั่งเพิ่มเติม: (ไม่มี — กรุณาดำเนินการจากชื่องานให้ครบถ้วนที่สุด)',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    beginCharacterTask('mina', summarizeTaskLabel(rawTitle, 'ทำงานตาม Task'));
+
+    try {
+      const executeWithModel = async (modelName: string, useLowThinking: boolean) => {
+        const response = await geminiClient.models.generateContent({
+          model: modelName,
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+          config: useLowThinking
+            ? {
+                systemInstruction,
+                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+              }
+            : { systemInstruction },
+        });
+        const text = (response.text ?? '').trim();
+        const tokens = response.usageMetadata?.totalTokenCount ?? 0;
+        return { text, tokens };
+      };
+
+      let result: { text: string; tokens: number };
+      try {
+        result = await executeWithModel(PRIMARY_MODEL, false);
+      } catch (primaryErr) {
+        const primaryClassified = classifyGeminiError(primaryErr);
+        if (primaryClassified.status === 401 || primaryClassified.status === 403) {
+          throw primaryErr;
+        }
+        console.log(
+          `[Cozy Desk] Mina scheduled task primary model (${PRIMARY_MODEL}) unavailable (${primaryClassified.code}); falling back to ${FALLBACK_MODEL}`
+        );
+        result = await executeWithModel(FALLBACK_MODEL, true);
+      }
+
+      const summary = (result.text || 'มีน่าดำเนินการตามรายการนี้เรียบร้อยแล้ว กรุณาตรวจสอบรายละเอียดได้เลยครับ').slice(
+        0,
+        2400
+      );
+      const usedTokens =
+        result.tokens > 0
+          ? result.tokens
+          : estimateFallbackTokens(systemInstruction.length + userPrompt.length, summary.length);
+      recordTokenUsage(usedTokens);
+
+      res.json({
+        summary,
+        tokensUsed: usedTokens,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      recordCharacterError('mina', classified.code, classified.message);
+      console.error('Mina execute-task error:', classified.code, err);
+      res.status(classified.status).json({ error: classified.message });
+    } finally {
+      endCharacterTask('mina');
     }
   });
 

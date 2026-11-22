@@ -6,7 +6,9 @@ import type {
   CameraPresetId,
   CameraUiState,
   CharacterStatusMap,
+  DrivingHudState,
   GameState,
+  GreenCarState,
   InspectableObject,
   InspectHoverRenderState,
   InteractableId,
@@ -31,34 +33,44 @@ import {
   AISTUDIO_LEAVE_RADIUS,
   AISTUDIO_POS,
   AISTUDIO_STAND_POS,
+  BEDROOM_BED_SEAT_POS,
+  BEDROOM_BED_STAND_POS,
   CAMERA_BASE_SCALE,
   CAMERA_DEFAULT_ZOOM,
   CAMERA_MAX_ZOOM,
   CAMERA_MIN_ZOOM,
+  carCollidesWithWorld,
   collidesWithWorld,
+  createInitialGreenCar,
   DINING_CHAIR_SPOTS,
   DIVIDER_COL,
   findNearestInteractable,
+  findSafeCarExitPos,
+  getGreenCarInteractable,
   getInteractableAtPoint,
   getRoomZone,
   INTERACTABLES,
   isDiningChairSeatId,
+  isPointInsideCar,
   isPointInShowerWetZone,
-  LOWER_EAST_WALL_COL,
-  MID_WALL_ROW,
+  MAILBOX_RECT,
+  MAP_COLS,
+  MAP_ROWS,
   MINA_APPROACH_RADIUS,
   MINA_GREET_STOP_DIST,
   MINA_LEAVE_RADIUS,
   MINA_MAX_ROAM_RADIUS,
   MINA_PINBOARD_SPOT,
   MINA_POS,
-  OFFICE_EAST_WALL_COL,
   PLAYER_START,
+  PORCH_PLANTER_RECT,
+  PORCH_PLANTER_STAND_POS,
+  ROAD_ROW_START,
   ROOM_CAMERA_TARGETS,
   SHOWER_STAND_POS,
+  SLEEP_STATION_RECT,
   SOFA_SEAT_POS,
   SOFA_STAND_POS,
-  SOUTH_WALL_ROW,
   TILE,
   VIEW_H,
   VIEW_W,
@@ -87,6 +99,15 @@ interface GameCanvasProps {
   isDriveOpen: boolean;
   isAntigravityOpen?: boolean;
   isAiStudioOpen?: boolean;
+  isMailboxOpen?: boolean;
+  mailboxUnreadCount?: number;
+  mailboxFreshArrival?: boolean;
+  isSleepLogOpen?: boolean;
+  hasLoggedTodaySleep?: boolean;
+  todaySleepLabel?: string | null;
+  hasWateredPlantsToday?: boolean;
+  todayPlantWaterLabel?: string | null;
+  plantWateringTriggerId?: number;
   characterStatuses?: CharacterStatusMap;
   isModalOpen: boolean;
   isFullscreenMap?: boolean;
@@ -102,6 +123,8 @@ interface GameCanvasProps {
   onAntigravityProximityEvent?: (event: 'approached' | 'returning') => void;
   onAiStudioProximityEvent?: (event: 'approached' | 'returning') => void;
   onCameraChange?: (cameraState: CameraUiState) => void;
+  onCarWrapHome?: (direction: 'left' | 'right') => void;
+  onDrivingHudChange?: (hud: DrivingHudState | null) => void;
 }
 
 interface CameraInternalState {
@@ -287,6 +310,7 @@ function isPlayerInsideAiStudioRadius(player: PlayerState, isAlreadyEngaged: boo
 function getEffectiveNearestInteractable(
   player: PlayerState,
   mina: MinaNpcState,
+  greenCar: GreenCarState,
   isAgyEngaged = false,
   isAiStudioEngaged = false
 ): InteractableObject | null {
@@ -321,6 +345,22 @@ function getEffectiveNearestInteractable(
     return AISTUDIO_DESK_INTERACTABLE;
   }
 
+  // Dynamic drivable green car proximity check
+  const carObj = getGreenCarInteractable(greenCar);
+  const distToCar = Math.hypot(player.x - greenCar.x, player.y - greenCar.y);
+  if (distToCar <= carObj.interactRadius) {
+    if (!filteredStatic) {
+      return carObj;
+    }
+    const staticDist = Math.hypot(
+      player.x - (filteredStatic.x + filteredStatic.w / 2),
+      player.y - (filteredStatic.y + filteredStatic.h / 2)
+    );
+    if (distToCar <= staticDist) {
+      return carObj;
+    }
+  }
+
   return filteredStatic;
 }
 
@@ -339,6 +379,15 @@ export function GameCanvas({
   isDriveOpen,
   isAntigravityOpen = false,
   isAiStudioOpen = false,
+  isMailboxOpen = false,
+  mailboxUnreadCount = 0,
+  mailboxFreshArrival = false,
+  isSleepLogOpen = false,
+  hasLoggedTodaySleep = false,
+  todaySleepLabel = null,
+  hasWateredPlantsToday = false,
+  todayPlantWaterLabel = null,
+  plantWateringTriggerId = 0,
   characterStatuses,
   isModalOpen,
   isFullscreenMap = false,
@@ -354,6 +403,8 @@ export function GameCanvas({
   onAntigravityProximityEvent,
   onAiStudioProximityEvent,
   onCameraChange,
+  onCarWrapHome,
+  onDrivingHudChange,
 }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -434,6 +485,15 @@ export function GameCanvas({
   const nearestKeyRef = useRef<string | null>(null);
   const agyEngagedRef = useRef(false);
   const aiStudioEngagedRef = useRef(false);
+  const greenCarRef = useRef<GreenCarState>(createInitialGreenCar());
+  const wrapToastCooldownRef = useRef(0);
+  const lastDrivingHudKeyRef = useRef('');
+  const plantWateringAnimRef = useRef<{ active: boolean; elapsed: number; duration: number }>({
+    active: false,
+    elapsed: 0,
+    duration: 2.2,
+  });
+  const lastPlantWaterTriggerRef = useRef(plantWateringTriggerId);
 
   // Smooth 2D camera state (follows player dead-center by default; user can pan, zoom, or pick room focus)
   const cameraRef = useRef<CameraInternalState>({
@@ -497,6 +557,14 @@ export function GameCanvas({
     isDriveOpen,
     isAntigravityOpen,
     isAiStudioOpen,
+    isMailboxOpen,
+    mailboxUnreadCount,
+    mailboxFreshArrival,
+    isSleepLogOpen,
+    hasLoggedTodaySleep,
+    todaySleepLabel,
+    hasWateredPlantsToday,
+    todayPlantWaterLabel,
     characterStatuses,
     isModalOpen,
     isFullscreenMap,
@@ -512,6 +580,8 @@ export function GameCanvas({
     onAntigravityProximityEvent,
     onAiStudioProximityEvent,
     onCameraChange,
+    onCarWrapHome,
+    onDrivingHudChange,
   });
   propsRef.current = {
     gameState,
@@ -525,6 +595,14 @@ export function GameCanvas({
     isDriveOpen,
     isAntigravityOpen,
     isAiStudioOpen,
+    isMailboxOpen,
+    mailboxUnreadCount,
+    mailboxFreshArrival,
+    isSleepLogOpen,
+    hasLoggedTodaySleep,
+    todaySleepLabel,
+    hasWateredPlantsToday,
+    todayPlantWaterLabel,
     characterStatuses,
     isModalOpen,
     isFullscreenMap,
@@ -540,6 +618,8 @@ export function GameCanvas({
     onAntigravityProximityEvent,
     onAiStudioProximityEvent,
     onCameraChange,
+    onCarWrapHome,
+    onDrivingHudChange,
   };
 
   // Match canvas internal aspect ratio to the widescreen desktop container (both normal & fullscreen)
@@ -713,6 +793,19 @@ export function GameCanvas({
       } else if (prevSeat === 'sofa') {
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
+      } else if (prevSeat === 'bedroom_bed') {
+        player.x = BEDROOM_BED_STAND_POS.x;
+        player.y = BEDROOM_BED_STAND_POS.y;
+      } else if (prevSeat === 'green_car') {
+        const car = greenCarRef.current;
+        car.isDriving = false;
+        car.speed = 0;
+        car.braking = false;
+        car.reversing = false;
+        car.steerAngle = 0;
+        const exitPos = findSafeCarExitPos(car);
+        player.x = exitPos.x;
+        player.y = exitPos.y;
       } else if (isDiningChairSeatId(prevSeat)) {
         const spot = DINING_CHAIR_SPOTS[prevSeat];
         player.x = spot.standPos.x;
@@ -796,6 +889,36 @@ export function GameCanvas({
       waypointsRef.current = [];
       pendingInteractRef.current = null;
       keysRef.current.clear();
+    } else if (playerSeat === 'bedroom_bed') {
+      player.x = BEDROOM_BED_SEAT_POS.x;
+      player.y = BEDROOM_BED_SEAT_POS.y;
+      player.facing = 'down';
+      player.isMoving = false;
+      player.walkFrame = 0;
+      player.isSitting = true;
+      player.seat = 'bedroom_bed';
+      player.sofaActivity = null;
+      player.sofaActivityElapsed = 0;
+      waypointsRef.current = [];
+      pendingInteractRef.current = null;
+      keysRef.current.clear();
+    } else if (playerSeat === 'green_car') {
+      const car = greenCarRef.current;
+      car.isDriving = true;
+      car.speed = 0;
+      car.braking = false;
+      car.reversing = false;
+      player.x = car.x;
+      player.y = car.y;
+      player.isMoving = false;
+      player.walkFrame = 0;
+      player.isSitting = true;
+      player.seat = 'green_car';
+      player.sofaActivity = null;
+      player.sofaActivityElapsed = 0;
+      waypointsRef.current = [];
+      pendingInteractRef.current = null;
+      keysRef.current.clear();
     } else if (isDiningChairSeatId(playerSeat)) {
       const spot = DINING_CHAIR_SPOTS[playerSeat];
       player.x = spot.seatPos.x;
@@ -823,6 +946,21 @@ export function GameCanvas({
       } else if (prevSeat === 'sofa') {
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
+        player.facing = 'down';
+      } else if (prevSeat === 'bedroom_bed') {
+        player.x = BEDROOM_BED_STAND_POS.x;
+        player.y = BEDROOM_BED_STAND_POS.y;
+        player.facing = 'right';
+      } else if (prevSeat === 'green_car') {
+        const car = greenCarRef.current;
+        car.isDriving = false;
+        car.speed = 0;
+        car.braking = false;
+        car.reversing = false;
+        car.steerAngle = 0;
+        const exitPos = findSafeCarExitPos(car);
+        player.x = exitPos.x;
+        player.y = exitPos.y;
         player.facing = 'down';
       } else if (isDiningChairSeatId(prevSeat)) {
         const spot = DINING_CHAIR_SPOTS[prevSeat];
@@ -905,6 +1043,21 @@ export function GameCanvas({
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
         player.facing = 'down';
+      } else if (prevSeat === 'bedroom_bed') {
+        player.x = BEDROOM_BED_STAND_POS.x;
+        player.y = BEDROOM_BED_STAND_POS.y;
+        player.facing = 'right';
+      } else if (prevSeat === 'green_car') {
+        const car = greenCarRef.current;
+        car.isDriving = false;
+        car.speed = 0;
+        car.braking = false;
+        car.reversing = false;
+        car.steerAngle = 0;
+        const exitPos = findSafeCarExitPos(car);
+        player.x = exitPos.x;
+        player.y = exitPos.y;
+        player.facing = 'down';
       } else if (isDiningChairSeatId(prevSeat)) {
         const spot = DINING_CHAIR_SPOTS[prevSeat];
         player.x = spot.standPos.x;
@@ -923,6 +1076,46 @@ export function GameCanvas({
       }
 
       const key = e.key.toLowerCase();
+      const isDrivingCar =
+        playerRef.current.isSitting && playerRef.current.seat === 'green_car';
+
+      if (isDrivingCar) {
+        if (
+          ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(
+            key
+          )
+        ) {
+          e.preventDefault();
+          if (propsRef.current.isMinaMenuOpen) {
+            propsRef.current.onDismissMinaMenu();
+          }
+          // Keep full-map overview if active; otherwise follow the moving car smoothly
+          if (
+            cameraRef.current.focusMode !== 'follow' &&
+            cameraRef.current.activePreset !== 'overview'
+          ) {
+            cameraRef.current.focusMode = 'follow';
+            cameraRef.current.activePreset = 'follow';
+          }
+          keysRef.current.add(key);
+          return;
+        }
+        if (key === 'h') {
+          e.preventDefault();
+          if (!e.repeat) {
+            greenCarRef.current.hornTick = 18;
+            soundEngine.playCarHorn();
+          }
+          return;
+        }
+        if (key === 'e') {
+          e.preventDefault();
+          soundEngine.playInteract();
+          standUpImmediately();
+          return;
+        }
+      }
+
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         e.preventDefault();
         if (propsRef.current.isMinaMenuOpen) {
@@ -951,6 +1144,7 @@ export function GameCanvas({
         const nearest = getEffectiveNearestInteractable(
           playerRef.current,
           minaRef.current,
+          greenCarRef.current,
           agyEngagedRef.current,
           aiStudioEngagedRef.current
         );
@@ -1017,6 +1211,32 @@ export function GameCanvas({
     };
   }, []);
 
+  // Trigger 5-plant watering can + droplet splash animation whenever player waters the porch planters
+  useEffect(() => {
+    if (plantWateringTriggerId > lastPlantWaterTriggerRef.current) {
+      lastPlantWaterTriggerRef.current = plantWateringTriggerId;
+      plantWateringAnimRef.current = {
+        active: true,
+        elapsed: 0,
+        duration: 2.2,
+      };
+      // Gently orient player toward the 5 potted plants when standing beside them
+      const player = playerRef.current;
+      const centerX = PORCH_PLANTER_RECT.x + PORCH_PLANTER_RECT.w / 2;
+      const centerY = PORCH_PLANTER_RECT.y + PORCH_PLANTER_RECT.h / 2;
+      if (Math.hypot(player.x - centerX, player.y - centerY) <= 110 && !player.isSitting) {
+        player.facing =
+          Math.abs(centerX - player.x) >= Math.abs(centerY - player.y)
+            ? centerX >= player.x
+              ? 'right'
+              : 'left'
+            : centerY >= player.y
+              ? 'down'
+              : 'up';
+      }
+    }
+  }, [plantWateringTriggerId]);
+
   // Main 60fps update + render loop
   useEffect(() => {
     let rafId = 0;
@@ -1027,6 +1247,14 @@ export function GameCanvas({
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
       tick += 1;
+
+      if (plantWateringAnimRef.current.active) {
+        plantWateringAnimRef.current.elapsed += dt;
+        if (plantWateringAnimRef.current.elapsed >= plantWateringAnimRef.current.duration) {
+          plantWateringAnimRef.current.active = false;
+          plantWateringAnimRef.current.elapsed = 0;
+        }
+      }
 
       const {
         gameState: state,
@@ -1040,6 +1268,14 @@ export function GameCanvas({
 
       const player = playerRef.current;
       const mina = minaRef.current;
+      const greenCar = greenCarRef.current;
+
+      if (greenCar.hornTick > 0) {
+        greenCar.hornTick -= 1;
+      }
+      if (wrapToastCooldownRef.current > 0) {
+        wrapToastCooldownRef.current = Math.max(0, wrapToastCooldownRef.current - dt);
+      }
 
       if (state === 'PLAYING' && !modalOpen && !player.isSitting) {
         let vx = 0;
@@ -1051,9 +1287,9 @@ export function GameCanvas({
         if (keys.has('a') || keys.has('arrowleft')) vx -= 1;
         if (keys.has('d') || keys.has('arrowright')) vx += 1;
 
-        // Smooth doorway exit assist when pressing Left inside the upper shower wet zone
+        // Smooth doorway exit assist when pressing Right inside the upper NW shower wet zone
         if (
-          vx < 0 &&
+          vx > 0 &&
           vy === 0 &&
           isPointInShowerWetZone(player.x, player.y) &&
           player.y < 16.45 * TILE
@@ -1089,11 +1325,17 @@ export function GameCanvas({
           const stepY = vy * MOVE_SPEED * dt;
 
           let moved = false;
-          if (!collidesWithWorld(player.x + stepX, player.y)) {
+          if (
+            !collidesWithWorld(player.x + stepX, player.y) &&
+            !isPointInsideCar(player.x + stepX, player.y, greenCar, 6)
+          ) {
             player.x += stepX;
             moved = true;
           }
-          if (!collidesWithWorld(player.x, player.y + stepY)) {
+          if (
+            !collidesWithWorld(player.x, player.y + stepY) &&
+            !isPointInsideCar(player.x, player.y + stepY, greenCar, 6)
+          ) {
             player.y += stepY;
             moved = true;
           }
@@ -1105,6 +1347,7 @@ export function GameCanvas({
               const nearest = getEffectiveNearestInteractable(
                 player,
                 mina,
+                greenCar,
                 agyEngagedRef.current,
                 aiStudioEngagedRef.current
               );
@@ -1147,7 +1390,7 @@ export function GameCanvas({
             ? waypointsRef.current[waypointsRef.current.length - 1]
             : null;
         const isWalkingOutOfShower =
-          (keys.size > 0 && vx < 0) ||
+          (keys.size > 0 && vx > 0) ||
           (lastWp !== null && !isPointInShowerWetZone(lastWp.x, lastWp.y));
 
         if (inShowerWetZone && !isWalkingOutOfShower) {
@@ -1162,11 +1405,11 @@ export function GameCanvas({
 
           // If player walked in and has no manual keys pressed, settle under the rain shower head
           if (keys.size === 0) {
-            if (lastWp && isPointInShowerWetZone(lastWp.x, lastWp.y) && player.x >= 16.15 * TILE) {
+            if (lastWp && isPointInShowerWetZone(lastWp.x, lastWp.y) && player.x <= 3.85 * TILE) {
               waypointsRef.current = [];
             }
             const phase = player.showerPhase ?? 'wetting';
-            const reachOffset = phase === 'grab_soap' || phase === 'return_soap' ? 7 : 0;
+            const reachOffset = phase === 'grab_soap' || phase === 'return_soap' ? -7 : 0;
             const targetX = SHOWER_STAND_POS.x + reachOffset;
             const targetY =
               SHOWER_STAND_POS.y + (phase === 'grab_soap' || phase === 'return_soap' ? -4 : 0);
@@ -1192,7 +1435,7 @@ export function GameCanvas({
               player.showerPhaseElapsed = 0;
             }
           } else if (phase === 'grab_soap') {
-            player.facing = 'right';
+            player.facing = 'left';
             if (player.showerPhaseElapsed >= 1.5) {
               player.showerPhase = 'scrub_soap';
               player.showerPhaseElapsed = 0;
@@ -1204,7 +1447,7 @@ export function GameCanvas({
               player.showerPhaseElapsed = 0;
             }
           } else if (phase === 'return_soap') {
-            player.facing = 'right';
+            player.facing = 'left';
             if (player.showerPhaseElapsed >= 1.5) {
               player.showerPhase = 'rinse';
               player.showerPhaseElapsed = 0;
@@ -1224,6 +1467,141 @@ export function GameCanvas({
           }
           player.showerPrivacyProgress = Math.max(0, player.showerPrivacyProgress - dt * 4.5);
         }
+      }
+
+      // Top-down arcade driving physics for the left green car (Garage, Driveway & 2-Lane Road with Wrap-Around!)
+      if (state === 'PLAYING' && !modalOpen && player.isSitting && player.seat === 'green_car') {
+        const keys = keysRef.current;
+        const up = keys.has('w') || keys.has('arrowup');
+        const down = keys.has('s') || keys.has('arrowdown');
+        const left = keys.has('a') || keys.has('arrowleft');
+        const right = keys.has('d') || keys.has('arrowright');
+        const handbrake = keys.has(' ');
+
+        const MAX_FWD = 250;
+        const MAX_REV = -115;
+        const ACCEL = 300;
+        const REV_ACCEL = 215;
+        const BRAKE_DECEL = 520;
+        const HANDBRAKE_DECEL = 640;
+        const COAST_DECEL = 165;
+        const MAX_TURN_RATE = 2.65;
+
+        const steerInput = (right ? 1 : 0) - (left ? 1 : 0);
+        const targetSteerAngle = steerInput * 0.44;
+        greenCar.steerAngle += (targetSteerAngle - greenCar.steerAngle) * Math.min(1, dt * 14);
+
+        let braking = false;
+        if (handbrake) {
+          braking = true;
+          if (greenCar.speed > 0) {
+            greenCar.speed = Math.max(0, greenCar.speed - HANDBRAKE_DECEL * dt);
+          } else if (greenCar.speed < 0) {
+            greenCar.speed = Math.min(0, greenCar.speed + HANDBRAKE_DECEL * dt);
+          }
+        } else if (up && !down) {
+          if (greenCar.speed < -6) {
+            braking = true;
+            greenCar.speed = Math.min(0, greenCar.speed + BRAKE_DECEL * dt);
+          } else {
+            greenCar.speed = Math.min(MAX_FWD, greenCar.speed + ACCEL * dt);
+          }
+        } else if (down && !up) {
+          if (greenCar.speed > 6) {
+            braking = true;
+            greenCar.speed = Math.max(0, greenCar.speed - BRAKE_DECEL * dt);
+          } else {
+            greenCar.speed = Math.max(MAX_REV, greenCar.speed - REV_ACCEL * dt);
+          }
+        } else {
+          if (greenCar.speed > 0) {
+            greenCar.speed = Math.max(0, greenCar.speed - COAST_DECEL * dt);
+          } else if (greenCar.speed < 0) {
+            greenCar.speed = Math.min(0, greenCar.speed + COAST_DECEL * dt);
+          }
+        }
+
+        if (!up && !down && Math.abs(greenCar.speed) < 2) {
+          greenCar.speed = 0;
+        }
+
+        greenCar.braking = braking;
+        greenCar.reversing = greenCar.speed < -4 || (down && !up && !handbrake && greenCar.speed <= 4);
+
+        let nextAngle = greenCar.angle;
+        if (Math.abs(greenCar.speed) > 4 && steerInput !== 0) {
+          const turnScale = Math.min(1, Math.abs(greenCar.speed) / 62);
+          const dirSign = greenCar.speed >= 0 ? 1 : -1;
+          nextAngle = greenCar.angle + steerInput * MAX_TURN_RATE * turnScale * dirSign * dt;
+        }
+
+        const nx = greenCar.x + Math.cos(nextAngle) * greenCar.speed * dt;
+        const ny = greenCar.y + Math.sin(nextAngle) * greenCar.speed * dt;
+
+        if (!carCollidesWithWorld(nx, ny, nextAngle)) {
+          greenCar.x = nx;
+          greenCar.y = ny;
+          greenCar.angle = nextAngle;
+        } else if (!carCollidesWithWorld(nx, greenCar.y, greenCar.angle)) {
+          greenCar.x = nx;
+          greenCar.speed *= 0.55;
+        } else if (!carCollidesWithWorld(greenCar.x, ny, greenCar.angle)) {
+          greenCar.y = ny;
+          greenCar.speed *= 0.55;
+        } else if (!carCollidesWithWorld(greenCar.x, greenCar.y, nextAngle)) {
+          greenCar.angle = nextAngle;
+          greenCar.speed *= 0.35;
+        } else {
+          greenCar.speed = 0;
+        }
+
+        // Seamless road edge wrap-around ("ขับทะลุอีกฝั่งเพื่อกลับบ้าน")
+        const onRoad = greenCar.y >= (ROAD_ROW_START - 0.65) * TILE;
+        if (onRoad) {
+          const camNow = cameraRef.current;
+          if (greenCar.x > WORLD_W) {
+            greenCar.x -= WORLD_W;
+            if (camNow.focusMode === 'follow') {
+              camNow.x -= WORLD_W;
+              camNow.targetX -= WORLD_W;
+            }
+            if (wrapToastCooldownRef.current <= 0) {
+              wrapToastCooldownRef.current = 3.2;
+              propsRef.current.onCarWrapHome?.('right');
+            }
+          } else if (greenCar.x < 0) {
+            greenCar.x += WORLD_W;
+            if (camNow.focusMode === 'follow') {
+              camNow.x += WORLD_W;
+              camNow.targetX += WORLD_W;
+            }
+            if (wrapToastCooldownRef.current <= 0) {
+              wrapToastCooldownRef.current = 3.2;
+              propsRef.current.onCarWrapHome?.('left');
+            }
+          }
+        }
+
+        player.x = greenCar.x;
+        player.y = greenCar.y;
+
+        const nextZone = getRoomZone(player.x, player.y);
+        if (nextZone !== currentZoneRef.current) {
+          currentZoneRef.current = nextZone;
+          propsRef.current.onZoneChange(nextZone);
+        }
+
+        const speedKmh = Math.round(Math.abs(greenCar.speed) * 0.24);
+        const gear: DrivingHudState['gear'] =
+          greenCar.speed > 4 ? 'D' : greenCar.speed < -4 ? 'R' : 'P';
+        const hudKey = `${gear}:${speedKmh}`;
+        if (hudKey !== lastDrivingHudKeyRef.current) {
+          lastDrivingHudKeyRef.current = hudKey;
+          propsRef.current.onDrivingHudChange?.({ speedKmh, gear });
+        }
+      } else if (lastDrivingHudKeyRef.current !== '') {
+        lastDrivingHudKeyRef.current = '';
+        propsRef.current.onDrivingHudChange?.(null);
       }
 
       // Advance non-repeating cozy idle activity while seated on the Living Room sofa
@@ -1581,6 +1959,7 @@ export function GameCanvas({
           : getEffectiveNearestInteractable(
               player,
               mina,
+              greenCar,
               agyEngagedRef.current,
               aiStudioEngagedRef.current
             );
@@ -1609,9 +1988,15 @@ export function GameCanvas({
 
       if (!isDraggingMap) {
         if (cam.focusMode === 'follow') {
-          // Keep the player character dead-center on screen in follow mode
-          cam.targetX = state === 'WORKING' ? (player.x + mina.x) / 2 : player.x;
-          cam.targetY = state === 'WORKING' ? (player.y + mina.y) / 2 : player.y;
+          if (player.isSitting && player.seat === 'green_car') {
+            // Subtle velocity look-ahead while driving so the road & driveway stay comfortably visible
+            cam.targetX = greenCar.x + Math.cos(greenCar.angle) * greenCar.speed * 0.16;
+            cam.targetY = greenCar.y + Math.sin(greenCar.angle) * greenCar.speed * 0.16;
+          } else {
+            // Keep the player character dead-center on screen in follow mode
+            cam.targetX = state === 'WORKING' ? (player.x + mina.x) / 2 : player.x;
+            cam.targetY = state === 'WORKING' ? (player.y + mina.y) / 2 : player.y;
+          }
         } else {
           const clampedTarget = clampCameraCenter(cam.targetX, cam.targetY, cam.targetZoom, vp);
           cam.targetX = clampedTarget.x;
@@ -1734,6 +2119,7 @@ export function GameCanvas({
             ? getEffectiveNearestInteractable(
                 player,
                 mina,
+                greenCar,
                 agyEngagedRef.current,
                 aiStudioEngagedRef.current
               )
@@ -1741,6 +2127,7 @@ export function GameCanvas({
         renderHouseScene(ctx, {
           player,
           mina,
+          greenCar,
           extraPinCount: pinCount,
           pinboardGlowTick: pinboardGlowTickRef.current,
           timeOfDay: tod,
@@ -1754,6 +2141,20 @@ export function GameCanvas({
           isDriveOpen: propsRef.current.isDriveOpen,
           isAntigravityOpen: propsRef.current.isAntigravityOpen,
           isAiStudioOpen: propsRef.current.isAiStudioOpen,
+          isMailboxOpen: propsRef.current.isMailboxOpen,
+          mailboxUnreadCount: propsRef.current.mailboxUnreadCount,
+          mailboxFreshArrival: propsRef.current.mailboxFreshArrival,
+          isSleepLogOpen: propsRef.current.isSleepLogOpen,
+          hasLoggedTodaySleep: propsRef.current.hasLoggedTodaySleep,
+          todaySleepLabel: propsRef.current.todaySleepLabel,
+          hasWateredPlantsToday: propsRef.current.hasWateredPlantsToday,
+          todayPlantWaterLabel: propsRef.current.todayPlantWaterLabel,
+          plantWateringProgress: plantWateringAnimRef.current.active
+            ? Math.min(
+                0.999,
+                plantWateringAnimRef.current.elapsed / plantWateringAnimRef.current.duration
+              )
+            : 0,
           characterStatuses: propsRef.current.characterStatuses,
           camera: { x: cam.x, y: cam.y, zoom: cam.zoom },
           inspectHover,
@@ -1929,6 +2330,41 @@ export function GameCanvas({
 
     const clickedObj = getInteractableAtPoint(wx, wy);
 
+    // Roadside Mailbox (or its floating incoming Gmail badge) can always be clicked directly to open & read immediately
+    const clickedMailboxBadge =
+      (propsRef.current.mailboxUnreadCount ?? 0) > 0 &&
+      wx >= MAILBOX_RECT.x - 16 &&
+      wx <= MAILBOX_RECT.x + MAILBOX_RECT.w + 16 &&
+      wy >= MAILBOX_RECT.y - 44 &&
+      wy <= MAILBOX_RECT.y + MAILBOX_RECT.h + 6;
+    if (
+      (clickedObj?.id === 'mailbox' || clickedMailboxBadge) &&
+      (propsRef.current.gameState === 'PLAYING' || propsRef.current.gameState === 'WORKING')
+    ) {
+      if (propsRef.current.isMinaMenuOpen) {
+        propsRef.current.onDismissMinaMenu();
+      }
+      propsRef.current.onInteract('mailbox');
+      return;
+    }
+
+    // Master Bedroom Daily Sleep Quest Station (or its floating badge) can also be clicked directly
+    const clickedSleepBadge =
+      wx >= SLEEP_STATION_RECT.x - 28 &&
+      wx <= SLEEP_STATION_RECT.x + SLEEP_STATION_RECT.w + 28 &&
+      wy >= SLEEP_STATION_RECT.y - 34 &&
+      wy <= SLEEP_STATION_RECT.y + SLEEP_STATION_RECT.h + 6;
+    if (
+      (clickedObj?.id === 'sleep_log' || clickedSleepBadge) &&
+      (propsRef.current.gameState === 'PLAYING' || propsRef.current.gameState === 'WORKING')
+    ) {
+      if (propsRef.current.isMinaMenuOpen) {
+        propsRef.current.onDismissMinaMenu();
+      }
+      propsRef.current.onInteract('sleep_log');
+      return;
+    }
+
     // Allow clicking office stations directly while conversing with Mina
     if (propsRef.current.gameState === 'WORKING') {
       if (
@@ -1972,8 +2408,30 @@ export function GameCanvas({
       return;
     }
 
-    // Handle clicks while seated on personal workdesk, Living Room sofa, or Kitchen dining chairs
+    const clickedGreenCar = isPointInsideCar(wx, wy, greenCarRef.current, 10);
+
+    // Handle clicks while seated on personal workdesk, Living Room sofa, Kitchen dining chairs, or driving the green car
     if (player.isSitting) {
+      if (player.seat === 'green_car') {
+        // While driving, clicking the car parks & exits cleanly; stray floor clicks won't accidentally eject the driver
+        if (clickedGreenCar) {
+          const car = greenCarRef.current;
+          car.isDriving = false;
+          car.speed = 0;
+          car.braking = false;
+          car.reversing = false;
+          car.steerAngle = 0;
+          const exitPos = findSafeCarExitPos(car);
+          player.isSitting = false;
+          player.seat = null;
+          player.x = exitPos.x;
+          player.y = exitPos.y;
+          player.facing = 'down';
+          soundEngine.playInteract();
+          propsRef.current.onStandUp();
+        }
+        return;
+      }
       if (player.seat === 'sofa' && clickedObj?.id === 'tv') {
         propsRef.current.onInteract('tv');
         return;
@@ -1999,6 +2457,10 @@ export function GameCanvas({
         player.x = SOFA_STAND_POS.x;
         player.y = SOFA_STAND_POS.y;
         player.facing = 'down';
+      } else if (prevSeat === 'bedroom_bed') {
+        player.x = BEDROOM_BED_STAND_POS.x;
+        player.y = BEDROOM_BED_STAND_POS.y;
+        player.facing = 'right';
       } else if (isDiningChairSeatId(prevSeat)) {
         const spot = DINING_CHAIR_SPOTS[prevSeat];
         player.x = spot.standPos.x;
@@ -2010,6 +2472,21 @@ export function GameCanvas({
       if (clickedObj?.id === prevSeat) {
         return;
       }
+    }
+
+    // Clicking the parked green car: get in immediately if close, else walk smoothly beside the door and get in
+    if (clickedGreenCar) {
+      const car = greenCarRef.current;
+      const distToCar = Math.hypot(player.x - car.x, player.y - car.y);
+      if (distToCar <= 92) {
+        propsRef.current.onInteract('green_car');
+        return;
+      }
+      const doorSpot = findSafeCarExitPos(car);
+      waypointsRef.current = findWalkablePath(player.x, player.y, doorSpot.x, doorSpot.y);
+      pendingInteractRef.current = 'green_car';
+      clickMarkerRef.current = { x: doorSpot.x, y: doorSpot.y, ttl: 35 };
+      return;
     }
 
     // Clicking Mina when she is already standing near her desk
@@ -2056,78 +2533,89 @@ export function GameCanvas({
       return;
     }
 
-    if (clickedObj) {
+    const clickedPlantBadge =
+      wx >= PORCH_PLANTER_RECT.x - 24 &&
+      wx <= PORCH_PLANTER_RECT.x + PORCH_PLANTER_RECT.w + 24 &&
+      wy >= PORCH_PLANTER_RECT.y - 32 &&
+      wy <= PORCH_PLANTER_RECT.y + PORCH_PLANTER_RECT.h + 6;
+    const effectiveClickedObj =
+      clickedObj ??
+      (clickedPlantBadge
+        ? INTERACTABLES.find((item) => item.id === 'porch_plants') ?? null
+        : null);
+
+    if (effectiveClickedObj) {
       const dist = Math.hypot(
-        player.x - (clickedObj.x + clickedObj.w / 2),
-        player.y - (clickedObj.y + clickedObj.h / 2)
+        player.x - (effectiveClickedObj.x + effectiveClickedObj.w / 2),
+        player.y - (effectiveClickedObj.y + effectiveClickedObj.h / 2)
       );
       if (
-        dist <= clickedObj.interactRadius + 16 ||
-        (clickedObj.id === 'pinboard' && getRoomZone(player.x, player.y) === 'office')
+        dist <= effectiveClickedObj.interactRadius + 16 ||
+        (effectiveClickedObj.id === 'pinboard' && getRoomZone(player.x, player.y) === 'office')
       ) {
-        propsRef.current.onInteract(clickedObj.id);
+        propsRef.current.onInteract(effectiveClickedObj.id);
         return;
       }
 
       // Walk to a clear spot in front of the clicked interactable using obstacle-free A* pathfinding
       const targetSpot =
-        clickedObj.id === 'workdesk'
+        effectiveClickedObj.id === 'workdesk'
           ? { x: WORK_STAND_POS.x, y: WORK_STAND_POS.y }
-          : clickedObj.id === 'sofa'
+          : effectiveClickedObj.id === 'sofa'
             ? { x: SOFA_STAND_POS.x, y: SOFA_STAND_POS.y }
-            : isDiningChairSeatId(clickedObj.id)
-              ? {
-                  x: DINING_CHAIR_SPOTS[clickedObj.id].standPos.x,
-                  y: DINING_CHAIR_SPOTS[clickedObj.id].standPos.y,
-                }
-              : clickedObj.id === 'dining_table'
-                ? {
-                    x: clickedObj.x + clickedObj.w / 2,
-                    y:
-                      player.y < clickedObj.y + clickedObj.h / 2
-                        ? clickedObj.y - 24
-                        : clickedObj.y + clickedObj.h + 24,
-                  }
-                : clickedObj.id === 'pinboard'
-                  ? { x: MINA_PINBOARD_SPOT.x, y: 2.85 * TILE }
-                  : clickedObj.id === 'drive_table'
+            : effectiveClickedObj.id === 'bedroom_bed'
+              ? { x: BEDROOM_BED_STAND_POS.x, y: BEDROOM_BED_STAND_POS.y }
+              : effectiveClickedObj.id === 'porch_plants'
+                ? { x: PORCH_PLANTER_STAND_POS.x, y: PORCH_PLANTER_STAND_POS.y }
+                : isDiningChairSeatId(effectiveClickedObj.id)
+                  ? {
+                      x: DINING_CHAIR_SPOTS[effectiveClickedObj.id].standPos.x,
+                      y: DINING_CHAIR_SPOTS[effectiveClickedObj.id].standPos.y,
+                    }
+                  : effectiveClickedObj.id === 'dining_table'
                     ? {
-                        x: clickedObj.x + clickedObj.w / 2,
+                        x: effectiveClickedObj.x + effectiveClickedObj.w / 2,
                         y:
-                          player.y < clickedObj.y + clickedObj.h / 2
-                            ? clickedObj.y - 18
-                            : clickedObj.y + clickedObj.h + 18,
+                          player.y < effectiveClickedObj.y + effectiveClickedObj.h / 2
+                            ? effectiveClickedObj.y - 24
+                            : effectiveClickedObj.y + effectiveClickedObj.h + 24,
                       }
-                    : clickedObj.id === 'tv'
-                      ? {
-                          x: clickedObj.x + clickedObj.w / 2,
-                          y: clickedObj.y - 22,
-                        }
-                      : {
-                          x: clickedObj.x + clickedObj.w / 2,
-                          y: Math.min(11 * TILE, clickedObj.y + clickedObj.h + 18),
-                        };
+                    : effectiveClickedObj.id === 'pinboard'
+                      ? { x: MINA_PINBOARD_SPOT.x, y: 2.85 * TILE }
+                      : effectiveClickedObj.id === 'drive_table'
+                        ? {
+                            x: effectiveClickedObj.x + effectiveClickedObj.w / 2,
+                            y:
+                              player.y < effectiveClickedObj.y + effectiveClickedObj.h / 2
+                                ? effectiveClickedObj.y - 18
+                                : effectiveClickedObj.y + effectiveClickedObj.h + 18,
+                          }
+                        : effectiveClickedObj.id === 'tv'
+                          ? {
+                              x: effectiveClickedObj.x + effectiveClickedObj.w / 2,
+                              y: effectiveClickedObj.y - 22,
+                            }
+                          : {
+                              x: effectiveClickedObj.x + effectiveClickedObj.w / 2,
+                              y: Math.min(11 * TILE, effectiveClickedObj.y + effectiveClickedObj.h + 18),
+                            };
 
       const path = findWalkablePath(player.x, player.y, targetSpot.x, targetSpot.y);
       waypointsRef.current = path;
-      pendingInteractRef.current = clickedObj.id;
+      pendingInteractRef.current = effectiveClickedObj.id;
       clickMarkerRef.current = { x: targetSpot.x, y: targetSpot.y, ttl: 35 };
       return;
     }
 
-    // Clamp clicked floor target inside interior walkable area and route with A*
-    // (Clicking inside the bathroom shower wet-zone routes directly to the automatic shower spot)
-    const clickedInShower =
-      wx >= 15.52 * TILE && wx <= 18.98 * TILE && wy >= 14.0 * TILE && wy <= 18.02 * TILE;
-    const maxWalkX =
-      (wy < (MID_WALL_ROW + 1) * TILE ? OFFICE_EAST_WALL_COL - 0.35 : LOWER_EAST_WALL_COL - 0.35) *
-      TILE;
+    // Clamp clicked floor target inside playable neighborhood lot (6 rooms, porch, sidewalk & front road)
+    // Clicking inside the NW bathroom shower wet-zone routes directly to the automatic shower spot
+    const clickedInShower = isPointInShowerWetZone(wx, wy);
     const clampedX = clickedInShower
       ? SHOWER_STAND_POS.x
-      : Math.max(1.35 * TILE, Math.min(maxWalkX, wx));
+      : Math.max(0.65 * TILE, Math.min((MAP_COLS - 0.65) * TILE, wx));
     const clampedY = clickedInShower
       ? SHOWER_STAND_POS.y
-      : Math.max(2.35 * TILE, Math.min((SOUTH_WALL_ROW - 0.45) * TILE, wy));
+      : Math.max(2.35 * TILE, Math.min((MAP_ROWS - 0.55) * TILE, wy));
     const path = findWalkablePath(player.x, player.y, clampedX, clampedY);
     waypointsRef.current = path;
     pendingInteractRef.current = null;
@@ -2147,7 +2635,7 @@ export function GameCanvas({
         onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
         onContextMenu={handleContextMenu}
-        aria-label="แผนที่บ้านจำลอง 2D ห้องพักผ่อน ห้องทำงาน ห้องครัว และห้องน้ำ"
+        aria-label="แผนที่บ้านจำลอง 2D ห้องนอนใหญ่ ห้องพักผ่อน ห้องทำงาน ห้องออกกำลังกาย ห้องน้ำ ห้องครัว โถงทางเข้า ทางเดินหน้าบ้าน โรงจอดรถ 2 คัน และถนนหน้าบ้าน"
         className={`pixelated block h-full w-full touch-none select-none bg-[#1B1612] ${
           isFullscreenMap ? 'rounded-none border-0' : 'rounded-xl border border-[#3B3129] shadow-2xl'
         } ${isPanningUi ? 'cursor-grabbing' : 'cursor-pointer'}`}

@@ -3,55 +3,58 @@ import {
   AISTUDIO_DESK_RECT,
   BATH_DOOR_ROW_END,
   BATH_DOOR_ROW_START,
-  DIVIDER_COL,
   KITCHEN_DINING_RECT,
   LOWER_FLOOR_ROW_START,
+  MAILBOX_RECT,
   MID_WALL_ROW,
+  PORCH_PLANTER_RECT,
+  SLEEP_STATION_RECT,
   TILE,
+  WEST_DIVIDER_COL,
 } from './houseMap';
 
 const WALL_FACE_Y = MID_WALL_ROW * TILE + 18;
 
-// Mirror & wall sconce coordinates (matches drawLowerRoomWalls in lowerRoomsRenderer.ts)
-const MIR_X = Math.round(11.78 * TILE);
+// Mirror & wall sconce coordinates (north-east of west Bathroom: cols 5.7..8.2)
+const MIR_X = Math.round(5.72 * TILE);
 const MIR_Y = WALL_FACE_Y + 4;
 const MIR_W = 80;
 const MIR_H = 30;
 
-// Rain shower pipe anchor
-const SH_PIPE_X = Math.round(17.7 * TILE);
+// Rain shower pipe anchor (north-west inside glass shower: col 2.3)
+const SH_PIPE_X = Math.round(2.3 * TILE);
 
-// Vanity cabinet coordinates (matches drawBathroomFurniture in lowerRoomsRenderer.ts)
-const VANITY_X = Math.round(11.35 * TILE);
+// Vanity cabinet coordinates (north-east of west Bathroom: cols 5.3..8.65)
+const VANITY_X = Math.round(5.3 * TILE);
 const VANITY_Y = Math.round(13.85 * TILE);
 const VANITY_W = Math.round(3.35 * TILE);
 const VANITY_H = Math.round(1.25 * TILE);
 
-// Shower wet-zone & glass enclosure coordinates
-const SHOWER_FLOOR_X = Math.round(15.52 * TILE);
+// Shower wet-zone & glass enclosure coordinates (NW corner: cols 1.02..4.48, rows 14..18.02)
+const SHOWER_FLOOR_X = Math.round(1.02 * TILE);
 const SHOWER_FLOOR_Y = LOWER_FLOOR_ROW_START * TILE;
-const SHOWER_FLOOR_W = Math.round(18.98 * TILE) - SHOWER_FLOOR_X;
+const SHOWER_FLOOR_W = Math.round(4.48 * TILE) - SHOWER_FLOOR_X;
 const SHOWER_FLOOR_H = Math.round(18.02 * TILE) - SHOWER_FLOOR_Y;
 
-const GLASS_X = Math.round(15.45 * TILE);
+const GLASS_LEFT_X = Math.round(1.02 * TILE);
+const GLASS_X = Math.round(4.35 * TILE); // East glass partition
 const GLASS_TOP_Y = Math.round(13.9 * TILE);
 const GLASS_DOOR_TOP_Y = Math.round(16.12 * TILE);
 const GLASS_BOT_Y = Math.round(17.98 * TILE);
-const GLASS_RIGHT_X = Math.round(18.98 * TILE);
 
-const DRAIN_X = Math.round(17.45 * TILE);
+const DRAIN_X = Math.round(2.55 * TILE);
 const DRAIN_Y = Math.round(15.9 * TILE);
 
-// Linen cabinet, toilet, washing machine coordinates
-const LINEN_X = Math.round(11.1 * TILE);
+// Linen cabinet (SE), toilet (south-center), washing machine (SW) coordinates
+const LINEN_X = Math.round(7.55 * TILE);
 const LINEN_Y = Math.round(19.95 * TILE);
 const LINEN_W = Math.round(1.35 * TILE);
 const LINEN_H = Math.round(1.85 * TILE);
 
-const TOILET_X = Math.round(13.3 * TILE);
+const TOILET_X = Math.round(5.35 * TILE);
 const TOILET_Y = Math.round(20.35 * TILE);
 
-const WASHER_X = Math.round(17.3 * TILE);
+const WASHER_X = Math.round(1.1 * TILE);
 const WASHER_Y = Math.round(19.95 * TILE);
 const WASHER_W = Math.round(1.6 * TILE);
 const WASHER_H = Math.round(1.85 * TILE);
@@ -104,7 +107,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
     name: 'หน้าต่างบานฝ้าระบายอากาศ',
     detail: 'หน้าต่างกระจกฝ้าช่วยระบายความชื้นและรับแสงธรรมชาติ',
-    x: Math.round(15.82 * TILE),
+    x: Math.round(3.05 * TILE),
     y: WALL_FACE_Y + 5,
     w: 36,
     h: 22,
@@ -204,7 +207,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
     name: 'ชั้นวางแชมพูและครีมอาบน้ำ',
     detail: 'ชั้นกระจกเข้ามุมวางขวดแชมพู ครีมอาบน้ำ และฟองน้ำอาบน้ำ',
-    x: Math.round(18.25 * TILE),
+    x: Math.round(1.05 * TILE),
     y: Math.round(14.0 * TILE),
     w: 22,
     h: 22,
@@ -216,7 +219,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
     name: 'ที่เก็บสบู่และสบู่ก้อน',
     detail: 'ถาดวางสบู่โครเมียมติดผนังสำหรับหยิบสบู่มาถูตัวและวางเก็บกลับที่เดิม',
-    x: Math.round(18.15 * TILE),
+    x: Math.round(1.1 * TILE),
     y: Math.round(14.9 * TILE),
     w: 22,
     h: 16,
@@ -235,7 +238,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     priority: 20,
   },
   {
-    id: 'bath_shower_glass_left',
+    id: 'bath_shower_glass_east',
     zone: 'bathroom',
     areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
     name: 'ฉากกั้นกระจกนิรภัยทึบแสงอัตโนมัติ',
@@ -264,9 +267,9 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
     name: 'ผนังกระจกและธรณีกั้นน้ำ',
     detail: 'กระจกนิรภัยและขอบหินอ่อนกันน้ำไหลออกนอกโซนเปียก ปรับทึบอัตโนมัติเมื่ออาบน้ำ',
-    x: GLASS_X,
+    x: GLASS_LEFT_X,
     y: GLASS_BOT_Y - 16,
-    w: GLASS_RIGHT_X - GLASS_X,
+    w: GLASS_X + 7 - GLASS_LEFT_X,
     h: 24,
     priority: 18,
   },
@@ -290,7 +293,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนแห้ง',
     name: 'พรมเช็ดเท้าหน้าอ่างล้างหน้า',
     detail: 'พรมผ้าทอสีครีมนุ่มวางหน้าเคาน์เตอร์อ่างล้างหน้า',
-    x: Math.round(12.05 * TILE),
+    x: Math.round(5.95 * TILE),
     y: Math.round(15.22 * TILE),
     w: 64,
     h: 18,
@@ -302,7 +305,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนแห้ง',
     name: 'พรมเช็ดเท้าหน้าห้องอาบน้ำ',
     detail: 'พรมซับน้ำสีเขียวเซจวางรับเท้าหน้าประตูห้องอาบน้ำ',
-    x: Math.round(13.95 * TILE),
+    x: Math.round(4.82 * TILE),
     y: Math.round(16.35 * TILE),
     w: 38,
     h: 45,
@@ -314,7 +317,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนแห้ง',
     name: 'เครื่องชั่งน้ำหนักดิจิทัล',
     detail: 'เครื่องชั่งน้ำหนักสีขาวทรงมินิมอลพร้อมหน้าจอแสดงผลดิจิทัล',
-    x: Math.round(12.55 * TILE),
+    x: Math.round(6.75 * TILE),
     y: Math.round(18.8 * TILE),
     w: 22,
     h: 20,
@@ -326,21 +329,21 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · ทางเข้า',
     name: 'ประตูทางเข้าห้องน้ำ',
     detail: 'ธรณีประตูหินอ่อนเชื่อมต่อจากห้องครัวเข้าสู่ห้องน้ำ',
-    x: DIVIDER_COL * TILE + 8,
+    x: WEST_DIVIDER_COL * TILE + 8,
     y: BATH_DOOR_ROW_START * TILE,
     w: 16,
     h: (BATH_DOOR_ROW_END - BATH_DOOR_ROW_START + 1) * TILE,
     priority: 10,
   },
 
-  // --- West & South wall fixtures ---
+  // --- East & South wall fixtures ---
   {
     id: 'bath_towel_rack',
     zone: 'bathroom',
     areaLabel: 'ห้องน้ำ · โซนแห้ง',
     name: 'ราวแขวนผ้าเช็ดตัวติดผนัง',
     detail: 'ราวแขวนไม้พร้อมผ้าเช็ดตัวสีครีมและสีเขียวเซจ',
-    x: Math.round(11.08 * TILE),
+    x: Math.round(8.2 * TILE),
     y: Math.round(18.35 * TILE),
     w: 20,
     h: 38,
@@ -412,7 +415,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนแห้ง',
     name: 'ถังขยะห้องน้ำฝาไม้ไผ่',
     detail: 'ถังขยะมีฝาปิดลายไม้ไผ่แบบเหยียบวางข้างโถสุขภัณฑ์',
-    x: Math.round(14.8 * TILE),
+    x: Math.round(4.55 * TILE),
     y: Math.round(21.0 * TILE),
     w: 20,
     h: 22,
@@ -424,7 +427,7 @@ export const BATHROOM_INSPECTABLES: InspectableObject[] = [
     areaLabel: 'ห้องน้ำ · โซนซักผ้า',
     name: 'ตะกร้าผ้าหวายสาน',
     detail: 'ตะกร้าหวายสำหรับใส่เสื้อผ้าที่รอซัก',
-    x: Math.round(16.05 * TILE),
+    x: Math.round(2.9 * TILE),
     y: Math.round(20.25 * TILE),
     w: Math.round(1.05 * TILE),
     h: Math.round(1.4 * TILE),
@@ -568,10 +571,78 @@ export const OFFICE_INSPECTABLES: InspectableObject[] = [
   },
 ];
 
+export const ROADSIDE_INSPECTABLES: InspectableObject[] = [
+  {
+    id: 'roadside_gmail_mailbox',
+    zone: 'entryway',
+    areaLabel: 'ริมถนนหน้าบ้าน · Gmail',
+    name: 'ตู้ไปรษณีย์ริมถนน (Gmail)',
+    detail:
+      'เชื่อมต่อกับ Google Gmail API เมื่อมีอีเมลใหม่ธงแดงจะยกขึ้นพร้อมแจ้งเตือน เดินมาแล้วกด E หรือคลิกที่ตู้ไปรษณีย์เพื่อเปิดอ่านได้เลย',
+    x: MAILBOX_RECT.x - 2,
+    y: MAILBOX_RECT.y - 12,
+    w: MAILBOX_RECT.w + 4,
+    h: MAILBOX_RECT.h + 12,
+    priority: 22,
+  },
+];
+
+export const BEDROOM_INSPECTABLES: InspectableObject[] = [
+  {
+    id: 'bedroom_sleep_quest_station',
+    zone: 'bedroom',
+    areaLabel: 'ห้องนอนใหญ่ · ภารกิจประจำวัน',
+    name: 'โต๊ะข้างเตียง · บันทึกการนอน (.json & AI)',
+    detail:
+      'อัปโหลดภาพสถิติการนอนจากแอพสุขภาพ (เช่น Huawei Health) เพื่อแปลงเป็นไฟล์ .json ประจำวัน และให้ AI วิเคราะห์คุณภาพการนอนแบบเจาะลึก',
+    x: SLEEP_STATION_RECT.x - 2,
+    y: SLEEP_STATION_RECT.y - 4,
+    w: SLEEP_STATION_RECT.w + 4,
+    h: SLEEP_STATION_RECT.h + 6,
+    priority: 22,
+  },
+];
+
+export const GARAGE_INSPECTABLES: InspectableObject[] = [
+  {
+    id: 'garage_empty_red_car_bay',
+    zone: 'garage',
+    areaLabel: 'โรงจอดรถ · ช่องจอดฝั่งขวา',
+    name: 'ช่องจอดรถคันสีแดง (ว่าง)',
+    detail:
+      'เหลือเพียงเส้นสีเหลืองและแท่นหยุดล้อ — มีคนขับรถคันสีแดงออกไปใช้งานอยู่ จึงยังไม่ได้กลับมาจอด',
+    x: Math.round(26.85 * TILE),
+    y: Math.round(23.65 * TILE),
+    w: Math.round(3.3 * TILE),
+    h: Math.round(5.4 * TILE),
+    priority: 10,
+  },
+];
+
+export const ENTRYWAY_INSPECTABLES: InspectableObject[] = [
+  {
+    id: 'entryway_porch_plants',
+    zone: 'entryway',
+    areaLabel: 'โถงทางเข้า · ภารกิจประจำวัน',
+    name: 'กระถางต้นไม้ดอก 5 ต้น',
+    detail:
+      'กระถางดินเผาปลูกต้นไม้ดอกสีสด 5 ต้นริมระเบียงโถงทางเข้า — กด E หรือคลิกเพื่อรดน้ำอย่างน้อยวันละ 1 ครั้ง (รีเซ็ตอัตโนมัติตอนเที่ยงคืน 00:00 น.)',
+    x: PORCH_PLANTER_RECT.x - 2,
+    y: PORCH_PLANTER_RECT.y - 4,
+    w: PORCH_PLANTER_RECT.w + 4,
+    h: PORCH_PLANTER_RECT.h + 6,
+    priority: 22,
+  },
+];
+
 export const INSPECTABLE_OBJECTS: InspectableObject[] = [
   ...BATHROOM_INSPECTABLES,
   ...KITCHEN_INSPECTABLES,
   ...OFFICE_INSPECTABLES,
+  ...ROADSIDE_INSPECTABLES,
+  ...BEDROOM_INSPECTABLES,
+  ...GARAGE_INSPECTABLES,
+  ...ENTRYWAY_INSPECTABLES,
 ];
 
 /**

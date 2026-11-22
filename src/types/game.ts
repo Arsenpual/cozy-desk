@@ -1,6 +1,6 @@
 export type GameState = 'TITLE_MENU' | 'PLAYING' | 'WORKING';
 
-export type RoomZone = 'living' | 'office' | 'kitchen' | 'bathroom';
+export type RoomZone = 'living' | 'office' | 'kitchen' | 'bathroom' | 'entryway' | 'bedroom' | 'garage' | 'gym';
 
 export type TimeOfDay = 'morning' | 'afternoon' | 'evening';
 
@@ -12,7 +12,17 @@ export type FacingDirection = 'up' | 'down' | 'left' | 'right';
 
 export type CameraFocusMode = 'follow' | 'free';
 
-export type CameraPresetId = 'follow' | 'overview' | 'living' | 'office' | 'kitchen' | 'bathroom';
+export type CameraPresetId =
+  | 'follow'
+  | 'overview'
+  | 'living'
+  | 'office'
+  | 'gym'
+  | 'kitchen'
+  | 'bathroom'
+  | 'entryway'
+  | 'bedroom'
+  | 'garage';
 
 export interface CameraTransform {
   x: number;
@@ -84,7 +94,32 @@ export type DiningChairSeatId =
   | 'dining_chair_sw'
   | 'dining_chair_se';
 
-export type PlayerSeatId = 'workdesk' | 'sofa' | DiningChairSeatId;
+export type PlayerSeatId =
+  | 'workdesk'
+  | 'sofa'
+  | 'bedroom_bed'
+  | 'green_car'
+  | DiningChairSeatId;
+
+export interface GreenCarState {
+  x: number;
+  y: number;
+  /** Heading in radians (0 = right/+X, Math.PI/2 = down/+Y, -Math.PI/2 = up/-Y) */
+  angle: number;
+  /** Signed forward velocity in world px/s (negative = reversing) */
+  speed: number;
+  /** Visual front-wheel steer angle in radians (-0.45..0.45) */
+  steerAngle: number;
+  isDriving: boolean;
+  braking: boolean;
+  reversing: boolean;
+  hornTick: number;
+}
+
+export interface DrivingHudState {
+  speedKmh: number;
+  gear: 'P' | 'D' | 'R';
+}
 
 export type SofaActivity = 'tea' | 'newspaper' | 'tv_remote';
 
@@ -104,7 +139,19 @@ export type InteractableId =
   | 'antigravity_desk'
   | 'ai_studio_desk'
   | 'dining_table'
+  | 'mailbox'
+  | 'sleep_log'
+  | 'bedroom_bed'
+  | 'green_car'
+  | 'porch_plants'
   | DiningChairSeatId;
+
+export interface DailyPlantWateringRecord {
+  date: string; // YYYY-MM-DD (local date)
+  wateredCount: number;
+  lastWateredAt: string; // ISO timestamp
+  lastWateredTimeLabel: string; // e.g. "11:15 น."
+}
 
 export type AntigravityMode = 'code' | 'workspace' | 'arch';
 
@@ -178,6 +225,83 @@ export interface GoogleTask {
   status: 'needsAction' | 'completed';
   updated?: string;
   parent?: string;
+}
+
+export interface GmailAttachmentMeta {
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface GmailMessageSummary {
+  id: string;
+  threadId: string;
+  snippet: string;
+  subject: string;
+  fromName: string;
+  fromEmail: string;
+  to?: string;
+  dateRaw?: string;
+  internalDate: number;
+  isUnread: boolean;
+  isStarred: boolean;
+  labelIds: string[];
+}
+
+export interface GmailMessageDetail extends GmailMessageSummary {
+  bodyText: string;
+  attachments: GmailAttachmentMeta[];
+}
+
+export interface SleepStageMetric {
+  minutes: number;
+  durationText: string;
+  percent: number | null;
+  status: string | null;
+  referenceRange: string | null;
+}
+
+export interface SleepAiAnalysis {
+  summary: string;
+  strengths: string[];
+  concerns: string[];
+  actionableTips: string[];
+  circadianNote: string;
+  analyzedAt: string;
+  model: string;
+}
+
+export interface DailySleepRecord {
+  id: string;
+  date: string; // YYYY-MM-DD
+  dateLabel: string;
+  sourceApp: string;
+  userLabel: string | null;
+  sleepScore: number | null;
+  percentileBeat: number | null;
+  bedtime: string | null; // HH:mm
+  wakeTime: string | null; // HH:mm
+  totalSleepMinutes: number | null;
+  totalSleepText: string | null;
+  totalSleepStatus: string | null;
+  totalSleepReference: string | null;
+  stages: {
+    deep: SleepStageMetric;
+    light: SleepStageMetric;
+    rem: SleepStageMetric;
+  };
+  deepSleepContinuityScore: number | null;
+  deepSleepContinuityStatus: string | null;
+  awakeCount: number | null;
+  awakeStatus: string | null;
+  breathingQualityScore: number | null;
+  breathingQualityStatus: string | null;
+  previousDayStressScore: number | null;
+  appInsights: string[];
+  appRecommendation: string | null;
+  aiAnalysis?: SleepAiAnalysis | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface TvFeedItem {

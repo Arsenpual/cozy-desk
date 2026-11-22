@@ -12,6 +12,7 @@ export const SCOPES = [
   'https://www.googleapis.com/auth/youtube.readonly',
   'https://www.googleapis.com/auth/tasks',
   'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/gmail.readonly',
 ] as const;
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -54,7 +55,7 @@ export const signInWithGoogleForYouTube = async (): Promise<{
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error('ไม่ได้รับสิทธิ์เข้าถึง YouTube จากบัญชี Google กรุณาลองเข้าสู่ระบบอีกครั้ง');
+      throw new Error('ไม่ได้รับสิทธิ์เข้าถึงบัญชี Google กรุณาลองเข้าสู่ระบบอีกครั้ง');
     }
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };

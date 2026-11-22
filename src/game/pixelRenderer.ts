@@ -4,6 +4,7 @@ import type {
   CharacterId,
   CharacterStatusMap,
   CharacterStatusSnapshot,
+  GreenCarState,
   InspectHoverRenderState,
   InteractableObject,
   MinaNpcState,
@@ -18,18 +19,17 @@ import {
   AISTUDIO_POS,
   CAMERA_BASE_SCALE,
   CENTER_TABLE_RECT,
+  CORE_OFFSET_X,
   DIVIDER_COL,
   DOOR_ROW_END,
   DOOR_ROW_START,
   getRoomZone,
   KITCHEN_DINING_RECT,
-  LOWER_EAST_WALL_COL,
-  LOWER_WORLD_W,
+  MAILBOX_RECT,
   MID_WALL_ROW,
   MINA_APPROACH_RADIUS,
   MINA_POS,
   OFFICE_EAST_WALL_COL,
-  SOUTH_WALL_ROW,
   TILE,
   VIEW_H,
   VIEW_W,
@@ -48,10 +48,26 @@ import {
   drawLowerRoomFloors,
   drawLowerRoomWalls,
 } from './lowerRoomsRenderer';
+import {
+  drawBedroomSleepDarkness,
+  drawBedroomSleepQuestBadge,
+  drawGreenCar,
+  drawPorchPlantQuestBadge,
+  drawRoadsideMailbox,
+  drawRoadsideMailboxNotification,
+  drawSouthRoomsFloors,
+  drawSouthRoomsForeground,
+  drawSouthRoomsFurniture,
+  drawSouthRoomsWalls,
+  drawWestBedroomFloor,
+  drawWestBedroomFurniture,
+  drawWestBedroomWalls,
+} from './southRoomsRenderer';
 
 export interface RenderContextState {
   player: PlayerState;
   mina: MinaNpcState;
+  greenCar?: GreenCarState;
   extraPinCount: number;
   pinboardGlowTick: number;
   timeOfDay: TimeOfDay;
@@ -65,6 +81,15 @@ export interface RenderContextState {
   isDriveOpen: boolean;
   isAntigravityOpen?: boolean;
   isAiStudioOpen?: boolean;
+  isMailboxOpen?: boolean;
+  mailboxUnreadCount?: number;
+  mailboxFreshArrival?: boolean;
+  isSleepLogOpen?: boolean;
+  hasLoggedTodaySleep?: boolean;
+  todaySleepLabel?: string | null;
+  hasWateredPlantsToday?: boolean;
+  todayPlantWaterLabel?: string | null;
+  plantWateringProgress?: number;
   characterStatuses?: CharacterStatusMap;
   camera: CameraTransform;
   inspectHover?: InspectHoverRenderState | null;
@@ -85,16 +110,21 @@ function pxRect(
   ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
 }
 
+// Local column constants for the Living Room + Home Office core (drawn translated by +CORE_OFFSET_X)
+const LOCAL_DIVIDER_COL = 10;
+const LOCAL_OFFICE_EAST_COL = 23;
+const LOCAL_UPPER_W = 24 * TILE;
+
 function drawWoodFloor(ctx: CanvasRenderingContext2D) {
-  // Living lounge oak floorboards (cols 1..9) & +50% expanded Home Office floorboards (cols 11..22, rows 2..11)
+  // Living lounge oak floorboards (local cols 1..9) & +50% expanded Home Office floorboards (local cols 11..22, rows 2..11)
   for (let row = 2; row <= 11; row++) {
-    for (let col = 1; col < OFFICE_EAST_WALL_COL; col++) {
-      if (col === DIVIDER_COL && (row < DOOR_ROW_START || row > DOOR_ROW_END)) {
+    for (let col = 1; col < LOCAL_OFFICE_EAST_COL; col++) {
+      if (col === LOCAL_DIVIDER_COL && (row < DOOR_ROW_START || row > DOOR_ROW_END)) {
         continue;
       }
       const x = col * TILE;
       const y = row * TILE;
-      const isOffice = col > DIVIDER_COL;
+      const isOffice = col > LOCAL_DIVIDER_COL;
 
       const baseA = isOffice ? '#B5895A' : '#C99E6B';
       const baseB = isOffice ? '#AD8152' : '#C29663';
@@ -115,8 +145,8 @@ function drawWoodFloor(ctx: CanvasRenderingContext2D) {
     }
   }
 
-  // Doorway wooden threshold trim
-  const doorX = DIVIDER_COL * TILE;
+  // Doorway wooden threshold trim between Living Room & Home Office
+  const doorX = LOCAL_DIVIDER_COL * TILE;
   pxRect(ctx, doorX, DOOR_ROW_START * TILE, TILE, (DOOR_ROW_END - DOOR_ROW_START + 1) * TILE, '#8B603A');
   pxRect(ctx, doorX + 3, DOOR_ROW_START * TILE + 2, TILE - 6, (DOOR_ROW_END - DOOR_ROW_START + 1) * TILE - 4, '#A47548');
   pxRect(ctx, doorX + 6, DOOR_ROW_START * TILE + 6, TILE - 12, (DOOR_ROW_END - DOOR_ROW_START + 1) * TILE - 12, '#B68657');
@@ -129,37 +159,16 @@ function drawWalls(
   extraPinCount: number,
   isPinboardActive: boolean
 ) {
-  const officeEastX = OFFICE_EAST_WALL_COL * TILE;
-  const lowerEastX = LOWER_EAST_WALL_COL * TILE;
+  const officeEastX = LOCAL_OFFICE_EAST_COL * TILE;
+  const dividerX = LOCAL_DIVIDER_COL * TILE;
   const midY = MID_WALL_ROW * TILE;
 
-  // Outer dark timber border shell (asymmetric L-shaped East wing for +50% expanded Home Office)
-  pxRect(ctx, 0, 0, WORLD_W, 10, '#3B281E'); // Full North outer border (cols 0..23)
-  pxRect(ctx, 0, SOUTH_WALL_ROW * TILE, LOWER_WORLD_W, TILE, '#3B281E'); // Lower wing South wall (cols 0..19)
-  pxRect(ctx, 0, 0, TILE, WORLD_H, '#3B281E'); // West outer wall (col 0)
-  pxRect(ctx, officeEastX, 0, TILE, (MID_WALL_ROW + 1) * TILE, '#3B281E'); // Expanded Office East wall (col 23, rows 0..12)
-  pxRect(
-    ctx,
-    lowerEastX,
-    midY,
-    (OFFICE_EAST_WALL_COL - LOWER_EAST_WALL_COL + 1) * TILE,
-    TILE,
-    '#3B281E'
-  ); // South outer wall of extended Office East wing (cols 19..23, row 12)
-  pxRect(ctx, lowerEastX, midY, TILE, WORLD_H - midY, '#3B281E'); // Lower wing (Bathroom) East wall (col 19, rows 12..22)
+  // Outer dark timber border shell for Living Room & Expanded Home Office (local cols 0..23)
+  pxRect(ctx, 0, 0, LOCAL_UPPER_W, 10, '#3B281E'); // North outer border (Living + Office)
+  pxRect(ctx, officeEastX, 0, TILE, (MID_WALL_ROW + 1) * TILE, '#3B281E'); // Expanded Office East wall (local col 23)
 
-  // Inner wood trim on side & overhang walls
-  pxRect(ctx, TILE - 5, 10, 5, WORLD_H - TILE - 10, '#5B3E2B'); // West inner trim
-  pxRect(ctx, officeEastX, 10, 5, midY - 10, '#5B3E2B'); // Expanded Office East inner trim
-  pxRect(
-    ctx,
-    lowerEastX,
-    midY,
-    (OFFICE_EAST_WALL_COL - LOWER_EAST_WALL_COL) * TILE + 5,
-    6,
-    '#5B3E2B'
-  ); // Expanded Office East overhang south baseboard trim
-  pxRect(ctx, lowerEastX, midY, 5, SOUTH_WALL_ROW * TILE - midY, '#5B3E2B'); // Bathroom East inner trim
+  // Inner wood trim on Office East wall
+  pxRect(ctx, officeEastX, 10, 5, midY - 10, '#5B3E2B');
 
   // North interior walls (Living: warm cream 9 cols, Expanded Office: soft warm sand 12 cols)
   pxRect(ctx, TILE, 10, 9 * TILE, 2 * TILE - 10, '#E9DFCE');
@@ -167,18 +176,18 @@ function drawWalls(
 
   // Subtle wallpaper vertical stripes
   for (let x = TILE + 8; x < officeEastX; x += 16) {
-    if (x >= DIVIDER_COL * TILE && x < (DIVIDER_COL + 1) * TILE) continue;
+    if (x >= dividerX && x < dividerX + TILE) continue;
     pxRect(ctx, x, 10, 2, 2 * TILE - 22, 'rgba(130, 102, 74, 0.08)');
   }
 
   // Wooden wainscoting / baseboard along north wall
-  const northInteriorW = (OFFICE_EAST_WALL_COL - 1) * TILE;
+  const northInteriorW = (LOCAL_OFFICE_EAST_COL - 1) * TILE;
   pxRect(ctx, TILE, 2 * TILE - 14, northInteriorW, 14, '#7A5438');
   pxRect(ctx, TILE, 2 * TILE - 14, northInteriorW, 2, '#9A6E4D');
   pxRect(ctx, TILE, 2 * TILE - 2, northInteriorW, 2, '#4A3121');
 
-  // Upper dividing partition wall (col 10)
-  const dx = DIVIDER_COL * TILE;
+  // Upper dividing partition wall (local col 10 -> world col 19)
+  const dx = dividerX;
   // Upper divider segment (rows 0..5)
   pxRect(ctx, dx, 0, TILE, DOOR_ROW_START * TILE, '#4B3224');
   pxRect(ctx, dx + 3, 10, TILE - 6, DOOR_ROW_START * TILE - 14, '#6E4A33');
@@ -969,7 +978,7 @@ function drawOfficeFurniture(
   pxRect(ctx, crX + 8, crY + 42, 12, 6, '#C85A3F');
 
   // 3. Player Ergonomic Swivel Chair (tucked closely in front of executive desk, centered on monitor)
-  const chX = Math.round(WORK_SEAT_POS.x) - 14;
+  const chX = Math.round(WORK_SEAT_POS.x - CORE_OFFSET_X) - 14;
   const chY = Math.round(WORK_SEAT_POS.y) - 14;
   pxRect(ctx, chX + 4, chY + 18, 20, 5, 'rgba(28,20,15,0.24)');
   pxRect(ctx, chX + 6, chY + 13, 16, 8, '#4A3F38');
@@ -1048,7 +1057,7 @@ function drawOfficeFurniture(
   pxRect(ctx, px + pw - 9, py + 15, 3, 2, Math.floor(tick / 25) % 2 === 0 ? '#4ADE80' : '#22C55E');
 
   // 2. Mina's Ergonomic Swivel Office Chair (at MINA_POS, facing right toward her computer)
-  const mcX = Math.round(MINA_POS.x);
+  const mcX = Math.round(MINA_POS.x - CORE_OFFSET_X);
   const mcY = Math.round(MINA_POS.y);
   pxRect(ctx, mcX - 10, mcY + 8, 20, 6, 'rgba(28,20,15,0.26)');
   // Rolling caster base
@@ -1162,8 +1171,8 @@ function drawOfficeFurniture(
   pxRect(ctx, bx + 5, by + 5, 4, 4, '#FAF6F0'); // Crumpled paper
   pxRect(ctx, bx + 9, by + 8, 3, 3, '#E8DFD3');
 
-  // 5b. South-East Office Potted Monstera Plant (balancing the expanded East Wing south wall)
-  drawPottedPlant(ctx, 19.35 * TILE, 10.75 * TILE, 'monstera');
+  // 5b. South-Wall Office Potted Monstera Plant (positioned neatly between Antigravity & AI Studio, clear of Gym doorway)
+  drawPottedPlant(ctx, 14.55 * TILE, 10.85 * TILE, 'monstera');
 
   // =========================================================================
   // 6. ANTIGRAVITY LOCALHOST DEV STATION (south-west tech corner of Home Office)
@@ -1174,7 +1183,7 @@ function drawOfficeFurniture(
   const agh = Math.round(1.8 * TILE); // ~58
 
   // Swivel cyber-indigo developer chair at AGY_POS (facing left toward dual monitors)
-  const acX = Math.round(AGY_POS.x);
+  const acX = Math.round(AGY_POS.x - CORE_OFFSET_X);
   const acY = Math.round(AGY_POS.y);
   pxRect(ctx, acX - 10, acY + 8, 20, 6, 'rgba(28,20,15,0.26)');
   pxRect(ctx, acX - 7, acY + 7, 14, 3, '#2D3039');
@@ -1227,13 +1236,13 @@ function drawOfficeFurniture(
   // =========================================================================
   // 7. GOOGLE AI STUDIO PROMPT LAB STATION (south-center bay of Home Office)
   // =========================================================================
-  const stx = Math.round(AISTUDIO_DESK_RECT.x);
+  const stx = Math.round(AISTUDIO_DESK_RECT.x - CORE_OFFSET_X);
   const sty = Math.round(AISTUDIO_DESK_RECT.y);
   const stw = Math.round(AISTUDIO_DESK_RECT.w); // ~82
   const sth = Math.round(AISTUDIO_DESK_RECT.h); // ~34
 
   // Ergonomic Cobalt Studio Swivel Chair at AISTUDIO_POS (facing south toward AI Studio workbench)
-  const scX = Math.round(AISTUDIO_POS.x);
+  const scX = Math.round(AISTUDIO_POS.x - CORE_OFFSET_X);
   const scY = Math.round(AISTUDIO_POS.y);
   pxRect(ctx, scX - 10, scY + 6, 20, 5, 'rgba(20, 24, 38, 0.25)');
   pxRect(ctx, scX - 7, scY + 4, 14, 3, '#2D3448');
@@ -1922,12 +1931,12 @@ function drawShoweringPlayerSilhouette(
   pxRect(ctx, x + 1, y + 1, 4, 7, 'rgba(205, 162, 136, 0.55)');
   pxRect(ctx, x - 7, y - 9 + bob, 14, 11, 'rgba(218, 174, 148, 0.58)');
 
-  // Arms based on shower phase
+  // Arms based on shower phase (west wall soap holder -> reach left)
   if (phase === 'grab_soap' || phase === 'return_soap') {
     const t = Math.min(1, elapsed / 1.5);
     const reach = Math.round((t < 0.5 ? t * 2 : (1 - t) * 2) * 14);
-    pxRect(ctx, x - 10, y - 7 + bob, 3, 8, 'rgba(218, 174, 148, 0.62)');
-    pxRect(ctx, x + 7, y - 8 + bob, 4 + reach, 4, 'rgba(218, 174, 148, 0.68)');
+    pxRect(ctx, x - 11 - reach, y - 8 + bob, 4 + reach, 4, 'rgba(218, 174, 148, 0.68)');
+    pxRect(ctx, x + 7, y - 7 + bob, 3, 8, 'rgba(218, 174, 148, 0.62)');
   } else if (phase === 'scrub_soap') {
     const scrubShift = Math.round(Math.sin(tick * 0.35) * 3);
     pxRect(ctx, x - 11 + scrubShift, y - 9 + bob, 4, 8, 'rgba(218, 174, 148, 0.68)');
@@ -1957,6 +1966,10 @@ function drawShoweringPlayerSilhouette(
 function drawPlayer(ctx: CanvasRenderingContext2D, player: PlayerState, tick: number) {
   if (player.isShowering) {
     drawShoweringPlayerSilhouette(ctx, player, tick);
+    return;
+  }
+  // When sleeping on the Master Bedroom King Bed or driving the green car, the player is rendered inside it
+  if (player.isSitting && (player.seat === 'bedroom_bed' || player.seat === 'green_car')) {
     return;
   }
   const x = Math.round(player.x);
@@ -2260,7 +2273,9 @@ function drawAtmosphereLighting(
   ctx: CanvasRenderingContext2D,
   timeOfDay: TimeOfDay,
   tick: number,
-  isTvOn: boolean
+  isTvOn: boolean,
+  mailboxUnreadCount = 0,
+  isSleepingInBed = false
 ) {
   ctx.save();
 
@@ -2270,80 +2285,140 @@ function drawAtmosphereLighting(
       timeOfDay === 'morning' ? 'rgba(255, 248, 220, 0.13)' : 'rgba(255, 198, 120, 0.16)';
     ctx.fillStyle = beamColor;
 
-    // Living room window sunbeam
+    // Master Bedroom (Upper-West Wing) twin north window sunbeams (omitted when bedroom is in night sleep mode)
+    if (!isSleepingInBed) {
+      ctx.beginPath();
+      ctx.moveTo(1.35 * TILE, 50);
+      ctx.lineTo(2.8 * TILE, 50);
+      ctx.lineTo(3.3 * TILE, 138);
+      ctx.lineTo(1.65 * TILE, 138);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(6.8 * TILE, 50);
+      ctx.lineTo(8.25 * TILE, 50);
+      ctx.lineTo(8.75 * TILE, 138);
+      ctx.lineTo(7.1 * TILE, 138);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Living room window sunbeam (shifted +CORE_OFFSET_X)
     ctx.beginPath();
-    ctx.moveTo(2.3 * TILE, 54);
-    ctx.lineTo(4.9 * TILE, 54);
-    ctx.lineTo(5.8 * TILE, 148);
-    ctx.lineTo(2.9 * TILE, 148);
+    ctx.moveTo(2.3 * TILE + CORE_OFFSET_X, 54);
+    ctx.lineTo(4.9 * TILE + CORE_OFFSET_X, 54);
+    ctx.lineTo(5.8 * TILE + CORE_OFFSET_X, 148);
+    ctx.lineTo(2.9 * TILE + CORE_OFFSET_X, 148);
     ctx.closePath();
     ctx.fill();
 
     // Expanded Office Executive window sunbeam
     ctx.beginPath();
-    ctx.moveTo(16.55 * TILE, 52);
-    ctx.lineTo(18.85 * TILE, 52);
-    ctx.lineTo(19.35 * TILE, 138);
-    ctx.lineTo(16.85 * TILE, 138);
+    ctx.moveTo(16.55 * TILE + CORE_OFFSET_X, 52);
+    ctx.lineTo(18.85 * TILE + CORE_OFFSET_X, 52);
+    ctx.lineTo(19.35 * TILE + CORE_OFFSET_X, 138);
+    ctx.lineTo(16.85 * TILE + CORE_OFFSET_X, 138);
     ctx.closePath();
     ctx.fill();
 
     // Expanded Office East Library window sunbeam
     ctx.beginPath();
-    ctx.moveTo(20.2 * TILE, 52);
-    ctx.lineTo(21.85 * TILE, 52);
-    ctx.lineTo(22.25 * TILE, 130);
-    ctx.lineTo(20.45 * TILE, 130);
+    ctx.moveTo(20.2 * TILE + CORE_OFFSET_X, 52);
+    ctx.lineTo(21.85 * TILE + CORE_OFFSET_X, 52);
+    ctx.lineTo(22.25 * TILE + CORE_OFFSET_X, 130);
+    ctx.lineTo(20.45 * TILE + CORE_OFFSET_X, 130);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Evening cozy darkness tint (clipped to the asymmetric house footprint)
+  // Full neighborhood lot atmospheric tint (house + side yards + front street)
   if (timeOfDay === 'evening') {
     ctx.fillStyle = 'rgba(18, 22, 38, 0.34)';
-    ctx.fillRect(0, 0, WORLD_W, (MID_WALL_ROW + 1) * TILE);
-    ctx.fillRect(0, (MID_WALL_ROW + 1) * TILE, LOWER_WORLD_W, WORLD_H - (MID_WALL_ROW + 1) * TILE);
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
   } else if (timeOfDay === 'afternoon') {
     ctx.fillStyle = 'rgba(230, 140, 60, 0.06)';
-    ctx.fillRect(0, 0, WORLD_W, (MID_WALL_ROW + 1) * TILE);
-    ctx.fillRect(0, (MID_WALL_ROW + 1) * TILE, LOWER_WORLD_W, WORLD_H - (MID_WALL_ROW + 1) * TILE);
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
   }
 
-  // Warm radial glow pools (Christmas tree, desk lamps, fireplace, pinboard & lower rooms)
+  // Warm radial glow pools across all 6 rooms, front porch & streetlamps
   const glowAlpha = timeOfDay === 'evening' ? 0.32 : 0.16;
+  const streetGlowAlpha = timeOfDay === 'evening' ? 0.44 : 0.12;
   const lampFlicker = 1 + Math.sin(tick * 0.1) * 0.03;
 
   const lights = [
-    { x: 1.85 * TILE, y: 2.75 * TILE, r: 84 * lampFlicker, color: `rgba(255, 208, 110, ${glowAlpha * 0.95})` },
-    { x: 13.65 * TILE, y: 2.4 * TILE, r: 78 * lampFlicker, color: `rgba(255, 212, 128, ${glowAlpha * 0.82})` },
-    { x: 16.2 * TILE, y: 3.45 * TILE, r: 96 * lampFlicker, color: `rgba(255, 190, 92, ${glowAlpha})` },
-    { x: 16.65 * TILE, y: 8.2 * TILE, r: 94 * lampFlicker, color: `rgba(255, 204, 118, ${glowAlpha * 0.78})` },
-    { x: 22.1 * TILE, y: 6.55 * TILE, r: 90 * lampFlicker, color: `rgba(255, 196, 108, ${glowAlpha * 0.95})` },
-    { x: 12.1 * TILE, y: 10.5 * TILE, r: 74 * lampFlicker, color: `rgba(125, 211, 252, ${glowAlpha * 0.65})` },
-    { x: 16.88 * TILE, y: 11.1 * TILE, r: 78 * lampFlicker, color: `rgba(96, 165, 250, ${glowAlpha * 0.72})` },
-    { x: 7.9 * TILE, y: 1.9 * TILE, r: 80 * lampFlicker, color: `rgba(244, 120, 56, ${glowAlpha * 0.95})` },
-    // Lower wing lighting: kitchen range hood, dining pendant, bathroom vanity sconces & shower overhead
-    { x: 3.95 * TILE, y: 14.1 * TILE, r: 78, color: `rgba(255, 214, 138, ${glowAlpha * 0.85})` },
-    { x: 6.3 * TILE, y: 19.1 * TILE, r: 106, color: `rgba(255, 206, 122, ${glowAlpha * 0.9})` },
-    { x: 13.0 * TILE, y: 14.2 * TILE, r: 94, color: `rgba(244, 248, 255, ${glowAlpha * 0.88})` },
-    { x: 17.2 * TILE, y: 15.6 * TILE, r: 78, color: `rgba(218, 244, 252, ${glowAlpha * 0.65})` },
+    // Master Bedroom (Upper-West Wing) warm nightstand & reading lamps (turned off while sleeping on King Bed)
+    ...(!isSleepingInBed
+      ? [
+          { x: 2.3 * TILE, y: 2.3 * TILE, r: 84 * lampFlicker, color: `rgba(255, 204, 118, ${glowAlpha * 0.92})` },
+          { x: 7.2 * TILE, y: 2.3 * TILE, r: 84 * lampFlicker, color: `rgba(255, 204, 118, ${glowAlpha * 0.92})` },
+          { x: 8.1 * TILE, y: 9.7 * TILE, r: 78 * lampFlicker, color: `rgba(255, 212, 132, ${glowAlpha * 0.85})` },
+        ]
+      : []),
+    // Living Room & Expanded Home Office (shifted +CORE_OFFSET_X)
+    { x: 1.85 * TILE + CORE_OFFSET_X, y: 2.75 * TILE, r: 84 * lampFlicker, color: `rgba(255, 208, 110, ${glowAlpha * 0.95})` },
+    { x: 13.65 * TILE + CORE_OFFSET_X, y: 2.4 * TILE, r: 78 * lampFlicker, color: `rgba(255, 212, 128, ${glowAlpha * 0.82})` },
+    { x: 16.2 * TILE + CORE_OFFSET_X, y: 3.45 * TILE, r: 96 * lampFlicker, color: `rgba(255, 190, 92, ${glowAlpha})` },
+    { x: 16.65 * TILE + CORE_OFFSET_X, y: 8.2 * TILE, r: 94 * lampFlicker, color: `rgba(255, 204, 118, ${glowAlpha * 0.78})` },
+    { x: 22.1 * TILE + CORE_OFFSET_X, y: 6.55 * TILE, r: 90 * lampFlicker, color: `rgba(255, 196, 108, ${glowAlpha * 0.95})` },
+    { x: 12.1 * TILE + CORE_OFFSET_X, y: 10.5 * TILE, r: 74 * lampFlicker, color: `rgba(125, 211, 252, ${glowAlpha * 0.65})` },
+    { x: 16.88 * TILE + CORE_OFFSET_X, y: 11.1 * TILE, r: 78 * lampFlicker, color: `rgba(96, 165, 250, ${glowAlpha * 0.72})` },
+    { x: 7.9 * TILE + CORE_OFFSET_X, y: 1.9 * TILE, r: 80 * lampFlicker, color: `rgba(244, 120, 56, ${glowAlpha * 0.95})` },
+    // Middle-West Bathroom vanity sconces & NW glass shower overhead
+    { x: 7.0 * TILE, y: 14.2 * TILE, r: 94, color: `rgba(244, 248, 255, ${glowAlpha * 0.88})` },
+    { x: 2.5 * TILE, y: 15.6 * TILE, r: 78, color: `rgba(218, 244, 252, ${glowAlpha * 0.65})` },
+    // Middle-Center Kitchen range hood & dining pendant
+    { x: 3.95 * TILE + CORE_OFFSET_X, y: 14.1 * TILE, r: 78, color: `rgba(255, 214, 138, ${glowAlpha * 0.85})` },
+    { x: 6.3 * TILE + CORE_OFFSET_X, y: 19.1 * TILE, r: 106, color: `rgba(255, 206, 122, ${glowAlpha * 0.9})` },
+    // South-Center Entryway console lamp & twin Front Porch lanterns
+    { x: 1.65 * TILE + CORE_OFFSET_X, y: 24.2 * TILE, r: 82 * lampFlicker, color: `rgba(255, 210, 126, ${glowAlpha * 0.88})` },
+    { x: 3.65 * TILE + CORE_OFFSET_X, y: 28.9 * TILE, r: 76 * lampFlicker, color: `rgba(255, 205, 115, ${glowAlpha * 0.92})` },
+    { x: 7.35 * TILE + CORE_OFFSET_X, y: 28.9 * TILE, r: 76 * lampFlicker, color: `rgba(255, 205, 115, ${glowAlpha * 0.92})` },
+    // Middle-East Home Gym warm-neutral studio overhead track lights
+    { x: 22.2 * TILE, y: 16.5 * TILE, r: 96, color: `rgba(244, 248, 252, ${glowAlpha * 0.82})` },
+    { x: 26.2 * TILE, y: 16.5 * TILE, r: 96, color: `rgba(255, 244, 220, ${glowAlpha * 0.85})` },
+    { x: 30.2 * TILE, y: 16.5 * TILE, r: 90, color: `rgba(255, 236, 196, ${glowAlpha * 0.88})` },
+    // Attached 2-Car Garage overhead shop lights & exterior double-bay coach lanterns
+    { x: 23.7 * TILE, y: 24.5 * TILE, r: 105, color: `rgba(232, 244, 255, ${glowAlpha * 0.85})` },
+    { x: 28.5 * TILE, y: 24.5 * TILE, r: 105, color: `rgba(232, 244, 255, ${glowAlpha * 0.85})` },
+    { x: 20.4 * TILE, y: 30.8 * TILE, r: 78 * lampFlicker, color: `rgba(255, 205, 115, ${glowAlpha * 0.88})` },
+    { x: 31.4 * TILE, y: 30.8 * TILE, r: 78 * lampFlicker, color: `rgba(255, 205, 115, ${glowAlpha * 0.88})` },
+    // Warm solar garden path lights lining the Long Front Walkway (rows 33..37.5)
+    { x: 14.5 * TILE, y: 33.2 * TILE, r: 66 * lampFlicker, color: `rgba(255, 212, 128, ${streetGlowAlpha * 0.72})` },
+    { x: 14.5 * TILE, y: 35.6 * TILE, r: 66 * lampFlicker, color: `rgba(255, 212, 128, ${streetGlowAlpha * 0.72})` },
+    { x: 14.5 * TILE, y: 37.8 * TILE, r: 72 * lampFlicker, color: `rgba(255, 212, 128, ${streetGlowAlpha * 0.82})` },
+    // Pushed-Back Front Sidewalk & Neighborhood Streetlamps (row 39.0)
+    { x: 4.8 * TILE, y: 39.0 * TILE, r: 96 * lampFlicker, color: `rgba(255, 204, 112, ${streetGlowAlpha})` },
+    { x: 11.4 * TILE, y: 39.0 * TILE, r: 96 * lampFlicker, color: `rgba(255, 204, 112, ${streetGlowAlpha})` },
+    { x: 17.6 * TILE, y: 39.0 * TILE, r: 96 * lampFlicker, color: `rgba(255, 204, 112, ${streetGlowAlpha})` },
+    { x: 31.95 * TILE, y: 39.0 * TILE, r: 96 * lampFlicker, color: `rgba(255, 204, 112, ${streetGlowAlpha})` },
   ];
 
   if (isTvOn) {
     const tvTwinkle = 0.19 + Math.sin(tick * 0.21) * 0.055 + Math.sin(tick * 0.47) * 0.025;
     const tvRadius = 80 + Math.sin(tick * 0.16) * 6;
     lights.push({
-      x: 3.7 * TILE,
+      x: 3.7 * TILE + CORE_OFFSET_X,
       y: 10.15 * TILE,
       r: tvRadius,
       color: `rgba(148, 210, 238, ${tvTwinkle.toFixed(3)})`,
     });
     // Secondary warm-tinted micro twinkle pulse near screen center
     lights.push({
-      x: 3.7 * TILE,
+      x: 3.7 * TILE + CORE_OFFSET_X,
       y: 10.45 * TILE,
       r: 34 + Math.cos(tick * 0.31) * 5,
       color: `rgba(255, 240, 200, ${(0.1 + Math.abs(Math.sin(tick * 0.28)) * 0.09).toFixed(3)})`,
+    });
+  }
+
+  if (mailboxUnreadCount > 0) {
+    const mailPulse = 0.2 + Math.abs(Math.sin(tick * 0.1)) * 0.14;
+    lights.push({
+      x: MAILBOX_RECT.x + MAILBOX_RECT.w / 2,
+      y: MAILBOX_RECT.y + 4,
+      r: 44 + Math.sin(tick * 0.12) * 4,
+      color: `rgba(248, 113, 113, ${mailPulse.toFixed(3)})`,
     });
   }
 
@@ -2361,12 +2436,22 @@ function drawAtmosphereLighting(
   ctx.font = '600 10px "Prompt", "IBM Plex Sans Thai", sans-serif';
   ctx.fillStyle = timeOfDay === 'evening' ? 'rgba(250, 246, 240, 0.55)' : 'rgba(65, 42, 26, 0.45)';
   ctx.textAlign = 'left';
-  ctx.fillText('ห้องพักผ่อน', 1.4 * TILE, 11.65 * TILE);
-  ctx.fillText('ห้องครัว', 4.15 * TILE, 21.65 * TILE);
-  ctx.textAlign = 'right';
-  ctx.fillText('ห้องทำงาน (+50%) · โต๊ะของมีน่า', 22.55 * TILE, 11.65 * TILE);
+  ctx.fillText('ห้องนอนใหญ่', 1.4 * TILE, 11.65 * TILE);
+  ctx.fillText('ห้องพักผ่อน', 1.4 * TILE + CORE_OFFSET_X, 11.65 * TILE);
+  ctx.fillText('ห้องครัว', 13.15 * TILE, 21.65 * TILE);
+  ctx.fillText('โถงทางเข้า · ชานหน้าบ้าน', 11.45 * TILE, 27.65 * TILE);
   ctx.fillStyle = timeOfDay === 'evening' ? 'rgba(232, 246, 248, 0.58)' : 'rgba(42, 68, 72, 0.48)';
-  ctx.fillText('ห้องน้ำ · ห้องอาบน้ำ', 15.65 * TILE, 21.65 * TILE);
+  ctx.fillText('ห้องน้ำ · ห้องอาบน้ำ', 1.4 * TILE, 21.65 * TILE);
+  ctx.fillStyle = timeOfDay === 'evening' ? 'rgba(250, 246, 240, 0.55)' : 'rgba(65, 42, 26, 0.45)';
+  ctx.textAlign = 'right';
+  ctx.fillText('ห้องทำงาน (+50%) · โต๊ะของมีน่า', 22.55 * TILE + CORE_OFFSET_X, 11.65 * TILE);
+  ctx.fillStyle = timeOfDay === 'evening' ? 'rgba(236, 244, 242, 0.58)' : 'rgba(244, 240, 232, 0.62)';
+  ctx.textAlign = 'center';
+  ctx.fillText('ห้องออกกำลังกาย', 24.8 * TILE, 19.72 * TILE);
+  ctx.fillStyle = timeOfDay === 'evening' ? 'rgba(236, 242, 248, 0.58)' : 'rgba(54, 62, 72, 0.52)';
+  ctx.fillText('โรงจอดรถ (2 คัน)', 26.0 * TILE, 29.7 * TILE);
+  ctx.fillStyle = timeOfDay === 'evening' ? 'rgba(236, 240, 246, 0.55)' : 'rgba(244, 240, 232, 0.58)';
+  ctx.fillText('ถนนหน้าบ้าน', 14.5 * TILE, 43.8 * TILE);
 
   ctx.restore();
 }
@@ -2380,7 +2465,7 @@ export function renderHouseScene(
   const baseScale = state.baseScale ?? CAMERA_BASE_SCALE;
 
   ctx.imageSmoothingEnabled = false;
-  // Cozy warm dark architectural backdrop outside house boundaries (visible when zoomed out)
+  // Cozy warm dark architectural backdrop outside neighborhood lot boundaries
   ctx.fillStyle = '#1B1612';
   ctx.fillRect(0, 0, viewW, viewH);
 
@@ -2390,10 +2475,9 @@ export function renderHouseScene(
   ctx.scale(scale, scale);
   ctx.translate(-state.camera.x, -state.camera.y);
 
-  // Subtle architectural outer rim shadow around the stepped L-shaped house perimeter
+  // Clean outer frame drop shadow around the full 33x38 house lot & street
   ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.fillRect(6, 6, WORLD_W, (MID_WALL_ROW + 1) * TILE);
-  ctx.fillRect(6, 6, LOWER_WORLD_W, WORLD_H);
+  ctx.fillRect(6, 6, WORLD_W, WORLD_H);
 
   // TV turns on visually either when the YouTube modal is open or when the player clicks the remote on the sofa
   const sofaWatchingTv =
@@ -2403,10 +2487,18 @@ export function renderHouseScene(
     state.player.sofaActivityElapsed >= 0.85;
   const tvScreenActive = state.isTvOn || sofaWatchingTv;
 
-  // 1. Floor, Rugs & Assistant Proximity Zones
+  // 1. Floors, Rugs & Assistant Proximity Zones
+  drawWestBedroomFloor(ctx);
+  ctx.save();
+  ctx.translate(CORE_OFFSET_X, 0);
   drawWoodFloor(ctx);
+  ctx.restore();
   drawLowerRoomFloors(ctx);
+  drawSouthRoomsFloors(ctx, state.timeOfDay, state.tick);
+  ctx.save();
+  ctx.translate(CORE_OFFSET_X, 0);
   drawRugs(ctx);
+  ctx.restore();
   drawMinaProximityZone(ctx, state.player, state.isWorking, state.tick);
   drawAntigravityProximityZone(
     ctx,
@@ -2421,13 +2513,21 @@ export function renderHouseScene(
     state.tick
   );
 
-  // 2. Walls, Windows, Fireplace, Pinboard & Lower Wing Architectural Walls
+  // 2. Architectural Walls across all 6 rooms, side yards & front porch
+  const isSleepingInBed =
+    state.player.isSitting && state.player.seat === 'bedroom_bed';
+  const windowSkyTime: TimeOfDay = isSleepingInBed ? 'evening' : state.timeOfDay;
   const isPinboardActive =
     state.mina.phase === 'pinning' || state.pinboardGlowTick > 0;
   const isShowerRunning =
     state.player.isShowering || state.player.showerPrivacyProgress > 0.05;
-  drawWalls(ctx, state.timeOfDay, state.tick, state.extraPinCount, isPinboardActive);
+  ctx.save();
+  ctx.translate(CORE_OFFSET_X, 0);
+  drawWalls(ctx, windowSkyTime, state.tick, state.extraPinCount, isPinboardActive);
+  ctx.restore();
+  drawWestBedroomWalls(ctx, windowSkyTime, state.tick, isSleepingInBed);
   drawLowerRoomWalls(ctx, state.timeOfDay, state.tick, isShowerRunning);
+  drawSouthRoomsWalls(ctx, state.timeOfDay, state.tick);
 
   // 3. Click-to-move waypoint ring
   if (state.clickTarget && state.clickTarget.ttl > 0) {
@@ -2443,15 +2543,33 @@ export function renderHouseScene(
   }
 
   // 4. Furniture & depth-sorted characters
+  drawWestBedroomFurniture(
+    ctx,
+    state.tick,
+    Boolean(state.hasLoggedTodaySleep),
+    Boolean(state.isSleepLogOpen),
+    isSleepingInBed
+  );
+  ctx.save();
+  ctx.translate(CORE_OFFSET_X, 0);
   drawLivingFurniture(ctx, state.tick, tvScreenActive);
+  ctx.restore();
   drawKitchenFurniture(ctx, state.tick);
   drawBathroomFurniture(ctx, state.tick, state.player);
+  drawSouthRoomsFurniture(
+    ctx,
+    state.tick,
+    Boolean(state.hasWateredPlantsToday),
+    state.plantWateringProgress ?? 0
+  );
 
   const minaBehindDesk = state.mina.x > DIVIDER_COL * TILE && state.mina.y < 3.4 * TILE;
   if (minaBehindDesk) {
     drawMinaNpc(ctx, state.mina, state.assistantMood, state.tick);
   }
 
+  ctx.save();
+  ctx.translate(CORE_OFFSET_X, 0);
   drawOfficeFurniture(
     ctx,
     state.assistantMood,
@@ -2459,6 +2577,7 @@ export function renderHouseScene(
     state.tick,
     state.player.isSitting && state.player.seat === 'workdesk'
   );
+  ctx.restore();
 
   const centerTableSortY = CENTER_TABLE_RECT.y + CENTER_TABLE_RECT.h * 0.55;
   const kitchenDiningNorthChairsSortY = KITCHEN_DINING_RECT.y - 4;
@@ -2466,6 +2585,7 @@ export function renderHouseScene(
   const kitchenDiningSouthSeatSortY = KITCHEN_DINING_RECT.y + KITCHEN_DINING_RECT.h - 2;
   const kitchenDiningSouthBackrestSortY = KITCHEN_DINING_RECT.y + KITCHEN_DINING_RECT.h + 14;
   const showerGlassSortY = 18.02 * TILE;
+  const porchRailingSortY = 30.88 * TILE;
 
   const drawList: Array<{ y: number; draw: () => void }> = [
     { y: state.player.y, draw: () => drawPlayer(ctx, state.player, state.tick) },
@@ -2494,6 +2614,21 @@ export function renderHouseScene(
       draw: () => drawGlassShowerEnclosure(ctx, state.tick, state.player),
     },
     {
+      y: porchRailingSortY,
+      draw: () => drawSouthRoomsForeground(ctx, state.tick),
+    },
+    {
+      y: MAILBOX_RECT.y + MAILBOX_RECT.h - 2,
+      draw: () =>
+        drawRoadsideMailbox(
+          ctx,
+          state.tick,
+          state.mailboxUnreadCount ?? 0,
+          Boolean(state.isMailboxOpen),
+          Boolean(state.mailboxFreshArrival)
+        ),
+    },
+    {
       y: AGY_POS.y,
       draw: () =>
         drawAntigravityNpc(ctx, state.player, state.tick, Boolean(state.isAntigravityOpen)),
@@ -2516,22 +2651,108 @@ export function renderHouseScene(
       draw: () => drawMinaNpc(ctx, state.mina, state.assistantMood, state.tick),
     });
   }
+  if (state.greenCar) {
+    const carSnap = state.greenCar;
+    drawList.push({
+      y: carSnap.y + 18,
+      draw: () => drawGreenCar(ctx, carSnap, state.timeOfDay, state.tick),
+    });
+  }
   drawList.sort((a, b) => a.y - b.y);
   for (const item of drawList) {
     item.draw();
   }
 
   // 6. Cozy dynamic lighting
-  drawAtmosphereLighting(ctx, state.timeOfDay, state.tick, tvScreenActive);
+  drawAtmosphereLighting(
+    ctx,
+    state.timeOfDay,
+    state.tick,
+    tvScreenActive,
+    state.mailboxUnreadCount ?? 0,
+    isSleepingInBed
+  );
+
+  // 6b. Bedroom-only lights-off dimming + window moonlight + Zzz when sleeping in bed
+  if (isSleepingInBed) {
+    drawBedroomSleepDarkness(ctx, state.tick);
+  }
 
   // 7. Interactable highlight (suppresses duplicate floating [E] tag for AI characters whose plate includes [E])
+  const mailboxUnread = state.mailboxUnreadCount ?? 0;
+  const isNearMailbox =
+    Boolean(state.nearestInteractable) &&
+    state.nearestInteractable?.id === 'mailbox' &&
+    !state.isWorking &&
+    !state.isTvOn;
+  const isNearSleepLog =
+    Boolean(state.nearestInteractable) &&
+    state.nearestInteractable?.id === 'sleep_log' &&
+    !state.isWorking &&
+    !state.isTvOn;
+  const isNearPorchPlants =
+    Boolean(state.nearestInteractable) &&
+    state.nearestInteractable?.id === 'porch_plants' &&
+    !state.isWorking &&
+    !state.isTvOn;
+
   if (state.nearestInteractable && !state.isWorking && !state.isTvOn) {
     const isCharacterStation =
       state.nearestInteractable.id === 'mina_desk' ||
       state.nearestInteractable.id === 'antigravity_desk' ||
       state.nearestInteractable.id === 'ai_studio_desk';
-    drawInteractableHighlight(ctx, state.nearestInteractable, state.tick, isCharacterStation);
+    const displayItem =
+      state.nearestInteractable.id === 'mailbox' && mailboxUnread > 0
+        ? {
+            ...state.nearestInteractable,
+            actionLabel: `เปิดอ่าน Gmail (${mailboxUnread > 99 ? '99+' : mailboxUnread} ใหม่)`,
+          }
+        : state.nearestInteractable.id === 'sleep_log'
+          ? {
+              ...state.nearestInteractable,
+              actionLabel: state.hasLoggedTodaySleep
+                ? state.todaySleepLabel
+                  ? `${state.todaySleepLabel} · ดูผล/อัปโหลดเพิ่ม`
+                  : 'บันทึกการนอนแล้ว · ดูผล (.json)'
+                : 'ยังไม่ได้บันทึกการนอนวันนี้ (อัปโหลด .json)',
+            }
+          : state.nearestInteractable.id === 'porch_plants'
+            ? {
+                ...state.nearestInteractable,
+                actionLabel: state.hasWateredPlantsToday
+                  ? 'รดน้ำแล้ววันนี้ · รดน้ำเพิ่มอีกครั้ง'
+                  : 'รดน้ำต้นไม้ทั้ง 5 ต้น (ภารกิจประจำวัน)',
+              }
+            : state.nearestInteractable;
+    drawInteractableHighlight(ctx, displayItem, state.tick, isCharacterStation);
   }
+
+  // 7b. Roadside Mailbox incoming Gmail notification badge (merges cleanly when player is adjacent)
+  drawRoadsideMailboxNotification(
+    ctx,
+    state.tick,
+    mailboxUnread,
+    Boolean(state.mailboxFreshArrival),
+    isNearMailbox
+  );
+
+  // 7c. Master Bedroom Daily Sleep Quest badge (merges cleanly when player is adjacent)
+  drawBedroomSleepQuestBadge(
+    ctx,
+    state.tick,
+    Boolean(state.hasLoggedTodaySleep),
+    state.todaySleepLabel ?? null,
+    isNearSleepLog
+  );
+
+  // 7d. Front Porch 5 Potted Plants Daily Watering Quest badge (merges cleanly when player is adjacent)
+  drawPorchPlantQuestBadge(
+    ctx,
+    state.tick,
+    Boolean(state.hasWateredPlantsToday),
+    state.todayPlantWaterLabel ?? null,
+    isNearPorchPlants || (state.plantWateringProgress ?? 0) > 0
+  );
 
   // 8. Proximity-only, single-character, bottom-to-top non-overlapping overhead status plate & bubble
   drawActiveCharacterOverlay(ctx, state);

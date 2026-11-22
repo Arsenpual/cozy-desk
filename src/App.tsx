@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
+  Car,
   Coffee,
   Compass,
   Crosshair,
@@ -17,6 +18,8 @@ import { AiStudioModal, type CharacterTaskActivityUpdate } from './components/Ai
 import { AntigravityModal } from './components/AntigravityModal';
 import { DriveTableModal } from './components/DriveTableModal';
 import { GameCanvas } from './components/GameCanvas';
+import { MailboxModal } from './components/MailboxModal';
+import { SleepQuestModal } from './components/SleepQuestModal';
 import { TasksPinboardModal } from './components/TasksPinboardModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
@@ -37,7 +40,11 @@ import type {
   CharacterStatusMap,
   CharacterStatusSnapshot,
   ChatMessage,
+  DailyPlantWateringRecord,
+  DailySleepRecord,
+  DrivingHudState,
   GameState,
+  GoogleTask,
   InteractableId,
   InteractableObject,
   MinaActionMenuAnchor,
@@ -53,11 +60,32 @@ import type {
   WorldToast,
 } from './types/game';
 import { ASSETS } from './types/game';
+import { fetchGmailUnreadStatus, GmailApiError } from './utils/gmailApi';
+import {
+  appendMinaSummaryToTaskNotes,
+  parseMinaTaskMeta,
+} from './utils/minaTaskScheduler';
+import {
+  findTodayPlantWatering,
+  loadPlantWateringHistory,
+  recordPlantWateringToday,
+} from './utils/plantQuestStorage';
+import {
+  fetchSleepLogs,
+  findTodaySleepRecord,
+  formatSleepTimeSummary,
+  getLocalIsoDate,
+  getMsUntilLocalMidnight,
+  loadLocalSleepLogs,
+  persistSleepLog,
+  removeSleepLog,
+} from './utils/sleepLogsApi';
 import { soundEngine } from './utils/sound';
 import {
   createTask,
   fetchAllTaskListsWithTasks,
   GoogleTasksApiError,
+  updateTask,
   type GoogleTaskListWithTasks,
 } from './utils/tasksApi';
 import {
@@ -213,6 +241,7 @@ export default function App() {
   const [nearestInteractable, setNearestInteractable] =
     useState<InteractableObject | null>(null);
   const [playerSeat, setPlayerSeat] = useState<PlayerSeatId | null>(null);
+  const [drivingHud, setDrivingHud] = useState<DrivingHudState | null>(null);
   const [assistantMood, setAssistantMood] = useState<AssistantMood>('idle');
   const [minaBubbleText, setMinaBubbleText] = useState<string | null>(null);
   const [minaMission, setMinaMission] = useState<MinaPinMission | null>(null);
@@ -228,12 +257,17 @@ export default function App() {
   const [toast, setToast] = useState<WorldToast | null>(null);
   const [tipIndex, setTipIndex] = useState(0);
 
-  // Living room YouTube TV, Office Google Tasks Pinboard, Drive Table, Antigravity & Google AI Studio modal states
+  // Living room YouTube TV, Office Google Tasks Pinboard, Drive Table, Antigravity, Google AI Studio, Roadside Mailbox & Bedroom Sleep Quest modal states
   const [isTvOpen, setIsTvOpen] = useState(false);
   const [isPinboardOpen, setIsPinboardOpen] = useState(false);
   const [isDriveOpen, setIsDriveOpen] = useState(false);
   const [isAntigravityOpen, setIsAntigravityOpen] = useState(false);
   const [isAiStudioOpen, setIsAiStudioOpen] = useState(false);
+  const [isMailboxOpen, setIsMailboxOpen] = useState(false);
+  const [isSleepLogOpen, setIsSleepLogOpen] = useState(false);
+  const [sleepLogs, setSleepLogs] = useState<DailySleepRecord[]>(() =>
+    loadLocalSleepLogs()
+  );
   const [serverCharacterStatuses, setServerCharacterStatuses] =
     useState<CharacterStatusMap | null>(null);
   const [clientCharacterActivities, setClientCharacterActivities] = useState<
@@ -249,7 +283,7 @@ export default function App() {
   const allTvFeed = [...customTvFeed, ...DEFAULT_TV_FEED];
   const [activeTvItem, setActiveTvItem] = useState<TvFeedItem | null>(null);
 
-  // Google Auth for personalized YouTube feed & Google Tasks (access token kept in memory only)
+  // Google Auth for personalized YouTube feed, Google Tasks, Google Drive & Gmail (access token kept in memory only)
   const [googleUser, setGoogleUser] = useState<User | null>(null);
   const [youtubeToken, setYoutubeToken] = useState<string | null>(null);
   const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
@@ -257,6 +291,16 @@ export default function App() {
   const [syncedTaskLists, setSyncedTaskLists] = useState<GoogleTaskListWithTasks[] | null>(null);
   const [isSyncingTasks, setIsSyncingTasks] = useState(false);
   const [tasksSyncError, setTasksSyncError] = useState<string | null>(null);
+
+  // Live Gmail Roadside Mailbox notification state
+  const [gmailUnreadTotal, setGmailUnreadTotal] = useState(0);
+  const [gmailScopeMissing, setGmailScopeMissing] = useState(false);
+  const [locallyReadMailIds, setLocallyReadMailIds] = useState<Set<string>>(() => new Set());
+  const [locallyReadUnreadIds, setLocallyReadUnreadIds] = useState<Set<string>>(() => new Set());
+  const [gmailFreshArrival, setGmailFreshArrival] = useState(false);
+  const knownGmailUnreadIdsRef = useRef<Set<string>>(new Set());
+  const hasPolledGmailOnceRef = useRef(false);
+  const freshArrivalTimerRef = useRef<number | null>(null);
 
   // Workspace state persisted in localStorage
   const [workMode, setWorkMode] = useState<WorkMode>('qa');
@@ -427,6 +471,125 @@ export default function App() {
     }, durationMs);
   }, []);
 
+  // Hydrate daily sleep .json archive from server (merged with local backup)
+  useEffect(() => {
+    let active = true;
+    void fetchSleepLogs().then((records) => {
+      if (active) {
+        setSleepLogs(records);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const [todayIsoDate, setTodayIsoDate] = useState<string>(() => getLocalIsoDate());
+  const [plantWateringLogs, setPlantWateringLogs] = useState<DailyPlantWateringRecord[]>(() =>
+    loadPlantWateringHistory()
+  );
+  const [plantWateringTriggerId, setPlantWateringTriggerId] = useState(0);
+
+  // Automatically reset daily quests (sleep upload + 5 entryway potted plants watering) right at local midnight (00:00)
+  useEffect(() => {
+    const checkDayRollover = () => {
+      const current = getLocalIsoDate();
+      setTodayIsoDate((prev) => {
+        if (prev !== current) {
+          if (gameState !== 'TITLE_MENU') {
+            showToast(
+              'ขึ้นวันใหม่แล้ว (00:00 น.) — ภารกิจบันทึกการนอนและภารกิจรดน้ำต้นไม้ 5 ต้นประจำวันรีเซ็ตแล้วครับ',
+              'house'
+            );
+          }
+          return current;
+        }
+        return prev;
+      });
+    };
+
+    const msUntilMidnight = getMsUntilLocalMidnight();
+    const midnightTimer = window.setTimeout(checkDayRollover, msUntilMidnight);
+    const fallbackInterval = window.setInterval(checkDayRollover, 30_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkDayRollover();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.clearTimeout(midnightTimer);
+      window.clearInterval(fallbackInterval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [gameState, showToast, todayIsoDate]);
+
+  const todaySleepRecord = useMemo(
+    () => findTodaySleepRecord(sleepLogs, todayIsoDate),
+    [sleepLogs, todayIsoDate]
+  );
+  const hasLoggedTodaySleep = Boolean(todaySleepRecord);
+  const todaySleepSummary = useMemo(
+    () => formatSleepTimeSummary(todaySleepRecord),
+    [todaySleepRecord]
+  );
+
+  const todayPlantWateringRecord = useMemo(
+    () => findTodayPlantWatering(plantWateringLogs, todayIsoDate),
+    [plantWateringLogs, todayIsoDate]
+  );
+  const hasWateredPlantsToday = Boolean(todayPlantWateringRecord);
+  const todayPlantWaterLabel = todayPlantWateringRecord?.lastWateredTimeLabel ?? null;
+
+  const handleWaterPorchPlants = useCallback(() => {
+    soundEngine.playWaterPlants();
+    setPlantWateringTriggerId((n) => n + 1);
+    setPlantWateringLogs((prev) => {
+      const { records, todayRecord, wasFirstToday } = recordPlantWateringToday(
+        prev,
+        todayIsoDate
+      );
+      if (wasFirstToday) {
+        showToast(
+          `ภารกิจรดน้ำต้นไม้ทั้ง 5 ต้นวันนี้สำเร็จแล้ว! (${todayRecord.lastWateredTimeLabel}) · รีเซ็ตอัตโนมัติตอน 00:00 น.`,
+          'player'
+        );
+      } else {
+        showToast(
+          `รดน้ำต้นไม้ทั้ง 5 ต้นเพิ่มความสดชื่นอีกครั้งแล้ว (${todayRecord.lastWateredTimeLabel} · วันนี้รดแล้ว ${todayRecord.wateredCount} ครั้ง)`,
+          'player'
+        );
+      }
+      return records;
+    });
+  }, [showToast, todayIsoDate]);
+
+  const handleSaveSleepLog = useCallback(
+    async (record: DailySleepRecord) => {
+      const wasDoneToday = hasLoggedTodaySleep;
+      const next = await persistSleepLog(record);
+      setSleepLogs(next);
+      const summary = formatSleepTimeSummary(record);
+      if (!wasDoneToday || record.createdAt === record.updatedAt) {
+        showToast(
+          `ภารกิจการนอนวันนี้สำเร็จ! ${summary?.hudLabel ?? `วันที่ ${record.date}`} — บันทึก .json เรียบร้อยแล้ว`,
+          'player'
+        );
+      }
+    },
+    [hasLoggedTodaySleep, showToast]
+  );
+
+  const handleDeleteSleepLog = useCallback(
+    async (id: string) => {
+      const next = await removeSleepLog(id);
+      setSleepLogs(next);
+      showToast('ลบบันทึกการนอนออกจากคลัง .json แล้ว', 'house');
+    },
+    [showToast]
+  );
+
   const enterFullscreenMap = useCallback(() => {
     soundEngine.playInteract();
     setShowHelp(false);
@@ -471,10 +634,20 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // Global Esc shortcut to close AI Studio, Antigravity, Drive, Pinboard, TV, help, stand up from desk, or exit fullscreen map
+  // Global Esc shortcut to close Sleep Quest, Mailbox, AI Studio, Antigravity, Drive, Pinboard, TV, help, stand up from desk, or exit fullscreen map
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (isSleepLogOpen) {
+        setIsSleepLogOpen(false);
+        soundEngine.playInteract();
+        return;
+      }
+      if (isMailboxOpen) {
+        setIsMailboxOpen(false);
+        soundEngine.playInteract();
+        return;
+      }
       if (isAiStudioOpen) {
         setIsAiStudioOpen(false);
         soundEngine.playInteract();
@@ -533,7 +706,9 @@ export default function App() {
     isAntigravityOpen,
     isDriveOpen,
     isFullscreenMap,
+    isMailboxOpen,
     isPinboardOpen,
+    isSleepLogOpen,
     isTvOpen,
     minaActionMenu,
     playerSeat,
@@ -559,7 +734,9 @@ export default function App() {
         isPinboardOpen ||
         isDriveOpen ||
         isAntigravityOpen ||
-        isAiStudioOpen
+        isAiStudioOpen ||
+        isMailboxOpen ||
+        isSleepLogOpen
       ) {
         return;
       }
@@ -573,7 +750,9 @@ export default function App() {
     isAiStudioOpen,
     isAntigravityOpen,
     isDriveOpen,
+    isMailboxOpen,
     isPinboardOpen,
+    isSleepLogOpen,
     isTvOpen,
     toggleFullscreenMap,
   ]);
@@ -822,6 +1001,56 @@ export default function App() {
         return;
       }
 
+      if (id === 'mailbox') {
+        soundEngine.playInteract();
+        setGmailFreshArrival(false);
+        setIsMailboxOpen(true);
+        return;
+      }
+
+      if (id === 'sleep_log') {
+        soundEngine.playInteract();
+        setIsSleepLogOpen(true);
+        return;
+      }
+
+      if (id === 'bedroom_bed') {
+        soundEngine.playInteract();
+        setPlayerSeat((curr) => {
+          const next = curr === 'bedroom_bed' ? null : 'bedroom_bed';
+          if (next === 'bedroom_bed') {
+            showToast(
+              'ปิดไฟห้องนอนและเอนตัวลงนอนแล้วครับ — วิวนอกหน้าต่างเปลี่ยนเป็นตอนกลางคืนอัตโนมัติ (กด WASD / E / Esc เพื่อตื่น)',
+              'player'
+            );
+          }
+          return next;
+        });
+        return;
+      }
+
+      if (id === 'green_car') {
+        setPlayerSeat((curr) => {
+          const next = curr === 'green_car' ? null : 'green_car';
+          if (next === 'green_car') {
+            soundEngine.playCarIgnition();
+            showToast(
+              'สตาร์ทรถคันสีเขียวแล้วครับ — W/S เดินหน้า–ถอยหลัง · A/D เลี้ยว · Space เบรก · H บีบแตร · E ลงจากรถ',
+              'player'
+            );
+          } else {
+            soundEngine.playInteract();
+          }
+          return next;
+        });
+        return;
+      }
+
+      if (id === 'porch_plants') {
+        handleWaterPorchPlants();
+        return;
+      }
+
       if (id === 'dining_table') {
         soundEngine.playCoffeeSip();
         showToast(
@@ -830,7 +1059,15 @@ export default function App() {
         );
       }
     },
-    [showMinaBubble, showToast, tipIndex]
+    [handleWaterPorchPlants, showMinaBubble, showToast, tipIndex]
+  );
+
+  const handleCarWrapHome = useCallback(
+    (_direction: 'left' | 'right') => {
+      soundEngine.playEnterOffice();
+      showToast('ขับวนรอบหมู่บ้านกลับมาถึงหน้าบ้านแล้วครับ!', 'player');
+    },
+    [showToast]
   );
 
   const handleAddCustomTvItem = ({
@@ -867,9 +1104,10 @@ export default function App() {
       const { user, accessToken } = await signInWithGoogleForYouTube();
       setGoogleUser(user);
       setYoutubeToken(accessToken);
+      setGmailScopeMissing(false);
       soundEngine.playInteract();
       showToast(
-        `เชื่อมต่อบัญชี YouTube (${user.displayName || user.email || 'Google'}) เรียบร้อยแล้วครับ`,
+        `เชื่อมต่อบัญชี Google (${user.displayName || user.email || 'Google'}) สำหรับ Gmail, Drive, Tasks และ YouTube เรียบร้อยแล้วครับ`,
         'house'
       );
     } catch (err) {
@@ -897,6 +1135,13 @@ export default function App() {
       setGoogleUser(null);
       setYoutubeToken(null);
       setGoogleAuthError(null);
+      setGmailUnreadTotal(0);
+      setGmailScopeMissing(false);
+      setGmailFreshArrival(false);
+      setLocallyReadMailIds(new Set());
+      setLocallyReadUnreadIds(new Set());
+      knownGmailUnreadIdsRef.current = new Set();
+      hasPolledGmailOnceRef.current = false;
       soundEngine.playInteract();
     }
   };
@@ -906,7 +1151,313 @@ export default function App() {
     setYoutubeToken(null);
     setSyncedTaskLists(null);
     setTasksSyncError(null);
+    setGmailUnreadTotal(0);
+    setGmailFreshArrival(false);
+    setMinaReadyReviewCount(0);
+    knownGmailUnreadIdsRef.current = new Set();
+    hasPolledGmailOnceRef.current = false;
   }, []);
+
+  // Scheduled Google Tasks executor exclusively for Mina (writes summary into Task notes; user checks off manually)
+  const [runningMinaTaskIds, setRunningMinaTaskIds] = useState<string[]>([]);
+  const [tasksBoardRefreshNonce, setTasksBoardRefreshNonce] = useState(0);
+  const [minaReadyReviewCount, setMinaReadyReviewCount] = useState(0);
+  const runningMinaTaskIdsRef = useRef<Set<string>>(new Set());
+  const isScanningMinaTasksRef = useRef(false);
+
+  const countMinaReadyReviewTasks = useCallback((lists: GoogleTaskListWithTasks[]): number => {
+    let total = 0;
+    for (const list of lists) {
+      for (const task of list.tasks) {
+        if (task.status === 'completed') continue;
+        const meta = parseMinaTaskMeta(task);
+        if (meta.assignedToMina && meta.status === 'ready_for_review') {
+          total += 1;
+        }
+      }
+    }
+    return total;
+  }, []);
+
+  const executeMinaScheduledTask = useCallback(
+    async (
+      taskListId: string,
+      task: GoogleTask,
+      options?: { triggerSource?: 'schedule' | 'manual' }
+    ) => {
+      if (!youtubeToken || runningMinaTaskIdsRef.current.has(task.id)) {
+        return;
+      }
+
+      runningMinaTaskIdsRef.current.add(task.id);
+      setRunningMinaTaskIds(Array.from(runningMinaTaskIdsRef.current));
+
+      const shortTitle = task.title.length > 36 ? `${task.title.slice(0, 36)}…` : task.title;
+      const meta = parseMinaTaskMeta(task);
+
+      setAssistantMood('thinking');
+      showMinaBubble(
+        options?.triggerSource === 'manual'
+          ? `รับทราบครับ! มีน่าเริ่มทำงาน "${shortTitle}" แล้ว เสร็จแล้วจะเขียนสรุปลงโน้ต Task ให้นะครับ`
+          : `ถึงเวลานัดแล้วครับ! มีน่าเริ่มทำงานตาม Task "${shortTitle}" แล้วนะครับ`,
+        5500
+      );
+
+      try {
+        const res = await fetch('/api/assistant/execute-task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: meta.cleanTaskTitle || task.title,
+            notes: meta.userPromptNotes,
+            dueDate: meta.scheduledDateIso ?? undefined,
+            scheduledTime: meta.scheduledTime ?? undefined,
+            localDate: todayIsoDate,
+            timeOfDay,
+            sleepLogsContext: sleepLogs.slice(0, 5),
+          }),
+        });
+
+        if (!res.ok) {
+          let errMsg = 'มีน่าไม่สามารถรันงานตาม Task ได้ในขณะนี้';
+          try {
+            const payload = (await res.json()) as { error?: string };
+            if (payload.error) errMsg = payload.error;
+          } catch {
+            // Keep default message
+          }
+          throw new Error(errMsg);
+        }
+
+        const data = (await res.json()) as { summary?: string };
+        const summaryText = (data.summary ?? '').trim();
+        if (!summaryText) {
+          throw new Error('ไม่ได้รับข้อความสรุปผลงานจากมีน่า');
+        }
+
+        const updatedNotes = appendMinaSummaryToTaskNotes(task, summaryText, new Date());
+
+        // Write Mina's summary into Task notes while intentionally keeping status='needsAction' so user reviews & checks off manually
+        const updatedTask = await updateTask(youtubeToken, taskListId, task.id, {
+          notes: updatedNotes,
+        });
+
+        setSyncedTaskLists((prev) => {
+          if (!prev) return prev;
+          const nextLists = prev.map((list) =>
+            list.id !== taskListId
+              ? list
+              : {
+                  ...list,
+                  tasks: list.tasks.map((t) => (t.id === task.id ? updatedTask : t)),
+                }
+          );
+          setMinaReadyReviewCount(countMinaReadyReviewTasks(nextLists));
+          return nextLists;
+        });
+
+        setTasksBoardRefreshNonce((n) => n + 1);
+        void fetchCharacterStatuses();
+        soundEngine.playMessageReceived();
+        setAssistantMood('speaking');
+        setMinaMission({ id: Date.now(), taskTitle: `สรุปงาน: ${task.title}` });
+        showMinaBubble(
+          `มีน่าเขียนสรุปงาน "${shortTitle}" ลงโน้ต Task เรียบร้อยแล้วครับ เปิดกระดานตรวจงานแล้วติ๊กเสร็จได้เลย!`,
+          6500
+        );
+        showToast(
+          `มีน่าทำงานตาม Task "${shortTitle}" เสร็จและเขียนสรุปลงโน้ตแล้วครับ — เปิดกระดาน Tasks เพื่อตรวจงานและติ๊กเสร็จด้วยตัวเองได้เลย`,
+          'mina'
+        );
+      } catch (err) {
+        if (err instanceof GoogleTasksApiError && (err.status === 401 || err.status === 403)) {
+          handleYouTubeTokenExpired();
+        }
+        const msg =
+          err instanceof Error
+            ? err.message
+            : 'เกิดข้อผิดพลาดระหว่างให้มีน่าทำงานตาม Task';
+        showToast(`มีน่าไม่สามารถรันงาน "${shortTitle}" ได้: ${msg}`, 'mina');
+      } finally {
+        runningMinaTaskIdsRef.current.delete(task.id);
+        setRunningMinaTaskIds(Array.from(runningMinaTaskIdsRef.current));
+        setAssistantMood('idle');
+      }
+    },
+    [
+      countMinaReadyReviewTasks,
+      fetchCharacterStatuses,
+      handleYouTubeTokenExpired,
+      showMinaBubble,
+      showToast,
+      sleepLogs,
+      timeOfDay,
+      todayIsoDate,
+      youtubeToken,
+    ]
+  );
+
+  const scanAndRunDueMinaTasks = useCallback(async () => {
+    if (
+      !googleUser ||
+      !youtubeToken ||
+      gameState === 'TITLE_MENU' ||
+      isScanningMinaTasksRef.current
+    ) {
+      return;
+    }
+    isScanningMinaTasksRef.current = true;
+    try {
+      const lists = await fetchAllTaskListsWithTasks(youtubeToken);
+      setSyncedTaskLists(lists);
+      setTasksSyncError(null);
+      setMinaReadyReviewCount(countMinaReadyReviewTasks(lists));
+
+      const dueItems: Array<{ listId: string; task: GoogleTask; scheduledAtMs: number }> = [];
+      const nowMs = Date.now();
+      for (const list of lists) {
+        for (const task of list.tasks) {
+          if (task.status === 'completed') continue;
+          if (runningMinaTaskIdsRef.current.has(task.id)) continue;
+          const meta = parseMinaTaskMeta(task, nowMs);
+          if (meta.isDueNow) {
+            dueItems.push({
+              listId: list.id,
+              task,
+              scheduledAtMs: meta.scheduledAtMs ?? nowMs,
+            });
+          }
+        }
+      }
+
+      dueItems.sort((a, b) => a.scheduledAtMs - b.scheduledAtMs);
+
+      for (const item of dueItems.slice(0, 2)) {
+        await executeMinaScheduledTask(item.listId, item.task, { triggerSource: 'schedule' });
+      }
+    } catch (err) {
+      if (err instanceof GoogleTasksApiError && (err.status === 401 || err.status === 403)) {
+        handleYouTubeTokenExpired();
+      }
+    } finally {
+      isScanningMinaTasksRef.current = false;
+    }
+  }, [
+    countMinaReadyReviewTasks,
+    executeMinaScheduledTask,
+    gameState,
+    googleUser,
+    handleYouTubeTokenExpired,
+    youtubeToken,
+  ]);
+
+  useEffect(() => {
+    if (!googleUser || !youtubeToken || gameState === 'TITLE_MENU') {
+      setMinaReadyReviewCount(0);
+      return;
+    }
+
+    void scanAndRunDueMinaTasks();
+    const timer = window.setInterval(() => {
+      void scanAndRunDueMinaTasks();
+    }, 20_000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void scanAndRunDueMinaTasks();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [gameState, googleUser, scanAndRunDueMinaTasks, youtubeToken]);
+
+  const syncGmailUnreadStatus = useCallback(
+    async (tokenOverride?: string | null) => {
+      const token = tokenOverride ?? youtubeToken;
+      if (!token) {
+        setGmailUnreadTotal(0);
+        setGmailFreshArrival(false);
+        return;
+      }
+      try {
+        const status = await fetchGmailUnreadStatus(token);
+        setGmailScopeMissing(false);
+        setGmailUnreadTotal(status.unreadCount);
+
+        const prevKnown = knownGmailUnreadIdsRef.current;
+        const incomingNewIds = status.latestUnreadIds.filter((id) => !prevKnown.has(id));
+
+        if (hasPolledGmailOnceRef.current && incomingNewIds.length > 0) {
+          soundEngine.playMessageReceived();
+          setGmailFreshArrival(true);
+          if (freshArrivalTimerRef.current) {
+            window.clearTimeout(freshArrivalTimerRef.current);
+          }
+          freshArrivalTimerRef.current = window.setTimeout(() => {
+            setGmailFreshArrival(false);
+          }, 8000);
+          showToast(
+            `มีอีเมลใหม่เข้าที่ตู้ไปรษณีย์ริมถนน (${incomingNewIds.length} ฉบับ)! เดินไปกด E หรือคลิกที่ตู้ไปรษณีย์เพื่อเปิดอ่านได้เลย`,
+            'house'
+          );
+        }
+
+        hasPolledGmailOnceRef.current = true;
+        knownGmailUnreadIdsRef.current = new Set(status.latestUnreadIds);
+      } catch (err) {
+        if (err instanceof GmailApiError) {
+          if (err.status === 401) {
+            handleYouTubeTokenExpired();
+          } else if (err.status === 403 && err.isScopeError) {
+            setGmailScopeMissing(true);
+          }
+        }
+      }
+    },
+    [handleYouTubeTokenExpired, showToast, youtubeToken]
+  );
+
+  // Poll Gmail unread inbox status every 30s while signed in so incoming messages alert right at the roadside mailbox
+  useEffect(() => {
+    if (!youtubeToken || gmailScopeMissing) {
+      if (!youtubeToken) {
+        setGmailUnreadTotal(0);
+        setGmailFreshArrival(false);
+        knownGmailUnreadIdsRef.current = new Set();
+        hasPolledGmailOnceRef.current = false;
+      }
+      return;
+    }
+
+    void syncGmailUnreadStatus(youtubeToken);
+    const interval = window.setInterval(() => {
+      void syncGmailUnreadStatus(youtubeToken);
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [gmailScopeMissing, syncGmailUnreadStatus, youtubeToken]);
+
+  const handleMarkMailRead = useCallback((messageId: string, wasUnread: boolean) => {
+    setLocallyReadMailIds((prev) => {
+      if (prev.has(messageId)) return prev;
+      const next = new Set(prev);
+      next.add(messageId);
+      return next;
+    });
+    if (wasUnread) {
+      setLocallyReadUnreadIds((prev) => {
+        if (prev.has(messageId)) return prev;
+        const next = new Set(prev);
+        next.add(messageId);
+        return next;
+      });
+    }
+  }, []);
+
+  const effectiveMailboxUnreadCount = Math.max(0, gmailUnreadTotal - locallyReadUnreadIds.size);
 
   const syncGoogleTasksForMina = useCallback(
     async (tokenOverride?: string | null): Promise<GoogleTaskListWithTasks[] | null> => {
@@ -1114,6 +1665,7 @@ export default function App() {
             timeOfDay,
             localDate,
             tasksContext,
+            sleepLogsContext: sleepLogs.slice(0, 7),
           }),
           signal: controller.signal,
         });
@@ -1257,6 +1809,7 @@ export default function App() {
       handleUpdateCharacterActivity,
       handleYouTubeTokenExpired,
       showMinaBubble,
+      sleepLogs,
       syncedTaskLists,
       timeOfDay,
       youtubeToken,
@@ -1472,6 +2025,29 @@ export default function App() {
           timeOfDay={timeOfDay}
           muted={muted}
           showHelp={showHelp}
+          hasLoggedTodaySleep={hasLoggedTodaySleep}
+          todaySleepLabel={todaySleepSummary?.hudLabel ?? null}
+          onOpenSleepQuest={() => {
+            soundEngine.playInteract();
+            setIsSleepLogOpen(true);
+          }}
+          hasWateredPlantsToday={hasWateredPlantsToday}
+          todayPlantWaterLabel={todayPlantWaterLabel}
+          onFocusPlantQuest={() => {
+            soundEngine.playInteract();
+            setCameraCommand({ id: Date.now(), type: 'preset', preset: 'entryway' });
+            showToast(
+              hasWateredPlantsToday
+                ? `รดน้ำกระถางต้นไม้ทั้ง 5 ต้นเรียบร้อยแล้ววันนี้ (${todayPlantWaterLabel ?? 'สำเร็จ'}) · รีเซ็ตอัตโนมัติตอนเที่ยงคืน 00:00 น.`
+                : 'ภารกิจประจำวัน: คลิกที่กระถางต้นไม้ 5 ต้นตรงระเบียงโถงทางเข้า หรือเดินไปกด E เพื่อรดน้ำได้เลยครับ',
+              'house'
+            );
+          }}
+          minaReadyReviewCount={minaReadyReviewCount}
+          onOpenMinaReviewTasks={() => {
+            soundEngine.playInteract();
+            setIsPinboardOpen(true);
+          }}
           onChangeTimeOfDay={(tod) => {
             soundEngine.playInteract();
             setTimeOfDay(tod);
@@ -1504,10 +2080,14 @@ export default function App() {
                     [
                       { id: 'follow', label: 'ตามตัว', icon: Crosshair },
                       { id: 'overview', label: 'ทั้งบ้าน', icon: Maximize2 },
+                      { id: 'bedroom', label: 'ห้องนอน' },
                       { id: 'living', label: 'พักผ่อน' },
                       { id: 'office', label: 'ทำงาน' },
-                      { id: 'kitchen', label: 'ครัว' },
+                      { id: 'gym', label: 'ออกกำลังกาย' },
                       { id: 'bathroom', label: 'ห้องน้ำ' },
+                      { id: 'kitchen', label: 'ครัว' },
+                      { id: 'entryway', label: 'ทางเข้า' },
+                      { id: 'garage', label: 'โรงจอดรถ' },
                     ] as Array<{ id: CameraPresetId; label: string; icon?: typeof Crosshair }>
                   ).map((item) => {
                     const Icon = item.icon;
@@ -1613,13 +2193,24 @@ export default function App() {
                   isDriveOpen={isDriveOpen}
                   isAntigravityOpen={isAntigravityOpen}
                   isAiStudioOpen={isAiStudioOpen}
+                  isMailboxOpen={isMailboxOpen}
+                  isSleepLogOpen={isSleepLogOpen}
+                  hasLoggedTodaySleep={hasLoggedTodaySleep}
+                  todaySleepLabel={todaySleepSummary?.canvasLabel ?? null}
+                  hasWateredPlantsToday={hasWateredPlantsToday}
+                  todayPlantWaterLabel={todayPlantWaterLabel}
+                  plantWateringTriggerId={plantWateringTriggerId}
+                  mailboxUnreadCount={effectiveMailboxUnreadCount}
+                  mailboxFreshArrival={gmailFreshArrival}
                   characterStatuses={characterStatuses}
                   isModalOpen={
                     isTvOpen ||
                     isPinboardOpen ||
                     isDriveOpen ||
                     isAntigravityOpen ||
-                    isAiStudioOpen
+                    isAiStudioOpen ||
+                    isMailboxOpen ||
+                    isSleepLogOpen
                   }
                   isFullscreenMap={isFullscreenMap}
                   onZoneChange={handleZoneChange}
@@ -1634,6 +2225,8 @@ export default function App() {
                   onAntigravityProximityEvent={handleAntigravityProximityEvent}
                   onAiStudioProximityEvent={handleAiStudioProximityEvent}
                   onCameraChange={setCameraUi}
+                  onCarWrapHome={handleCarWrapHome}
+                  onDrivingHudChange={setDrivingHud}
                 />
 
                 {/* Minimal 2-button floating chooser when clicking Mina at her computer desk */}
@@ -1643,7 +2236,9 @@ export default function App() {
                   !isPinboardOpen &&
                   !isDriveOpen &&
                   !isAntigravityOpen &&
-                  !isAiStudioOpen && (
+                  !isAiStudioOpen &&
+                  !isMailboxOpen &&
+                  !isSleepLogOpen && (
                   <div
                     role="menu"
                     aria-label="เลือกวิธีเริ่มสนทนากับมีน่า"
@@ -1680,7 +2275,35 @@ export default function App() {
             {/* Bottom contextual action bar (never overlaps canvas furniture) */}
             {!isFullscreenMap && (
               <div className="mt-2.5 flex min-h-10 w-full flex-wrap items-center justify-between gap-3 px-1 text-xs text-[#A89C90]">
-                {!isWorking && playerSeat ? (
+                {!isWorking && playerSeat === 'green_car' ? (
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundEngine.playInteract();
+                        setPlayerSeat(null);
+                      }}
+                      className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg bg-[#D97736] px-3.5 py-2 text-xs font-semibold text-[#FAF6F0] transition-colors hover:bg-[#C6682A]"
+                    >
+                      <span className="font-pixel rounded bg-[#231D19]/40 px-1.5 py-0.5 text-[10px]">
+                        E
+                      </span>
+                      <span>จอดและลงจากรถ</span>
+                    </button>
+                    <div className="inline-flex items-center gap-2 rounded-lg border border-[#3B4E4B] bg-[#1E2726] px-3 py-1.5 text-xs text-[#D6EAE6]">
+                      <Car className="h-3.5 w-3.5 text-[#7AC4BA]" />
+                      <span className="font-mono font-bold text-[#FDE68A]">
+                        {drivingHud?.gear ?? 'P'}
+                      </span>
+                      <span className="font-mono tabular-nums text-[#FAF6F0]">
+                        {drivingHud?.speedKmh ?? 0} km/h
+                      </span>
+                      <span className="hidden text-[#9BB7B3] md:inline">
+                        · W/S เดินหน้า–ถอยหลัง · A/D เลี้ยว · Space เบรก · H แตร
+                      </span>
+                    </div>
+                  </div>
+                ) : !isWorking && playerSeat ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -1697,7 +2320,9 @@ export default function App() {
                         ? 'กำลังนั่งหน้าคอมพิวเตอร์ — ลุกจากโต๊ะ'
                         : playerSeat === 'sofa'
                           ? 'กำลังนั่งพักบนโซฟา — ลุกจากโซฟา'
-                          : 'กำลังนั่งที่โต๊ะอาหารคริสต์มาส — ลุกจากเก้าอี้'}
+                          : playerSeat === 'bedroom_bed'
+                            ? 'กำลังนอนพักผ่อนบนเตียง (ปิดไฟห้องนอน) — ลุกจากเตียง'
+                            : 'กำลังนั่งที่โต๊ะอาหารคริสต์มาส — ลุกจากเก้าอี้'}
                     </span>
                   </button>
                 ) : !isWorking && nearestInteractable ? (
@@ -1710,7 +2335,18 @@ export default function App() {
                       E
                     </span>
                     <span>
-                      {nearestInteractable.label} — {nearestInteractable.actionLabel}
+                      {nearestInteractable.id === 'mailbox' &&
+                      effectiveMailboxUnreadCount > 0
+                        ? `${nearestInteractable.label} — เปิดอ่าน Gmail (${effectiveMailboxUnreadCount} ข้อความใหม่)`
+                        : nearestInteractable.id === 'sleep_log'
+                          ? hasLoggedTodaySleep
+                            ? `${nearestInteractable.label} — ${todaySleepSummary?.hudLabel ?? 'บันทึกแล้ว'} · ดูผล/อัปโหลดเพิ่ม`
+                            : `${nearestInteractable.label} — ยังไม่ได้บันทึกการนอนวันนี้ (อัปโหลด .json)`
+                          : nearestInteractable.id === 'porch_plants'
+                            ? hasWateredPlantsToday
+                              ? `${nearestInteractable.label} — รดน้ำแล้ววันนี้ (${todayPlantWaterLabel ?? 'สำเร็จ'}) · รดน้ำเพิ่มอีกครั้ง`
+                              : `${nearestInteractable.label} — รดน้ำต้นไม้ทั้ง 5 ต้น (ภารกิจประจำวัน)`
+                            : `${nearestInteractable.label} — ${nearestInteractable.actionLabel}`}
                     </span>
                   </button>
                 ) : (
@@ -1720,12 +2356,20 @@ export default function App() {
                       {isWorking
                         ? 'กำลังยืนสนทนากับมีน่า (กด Esc เพื่อจบการสนทนา)'
                         : zone === 'living'
-                          ? 'นั่งพักบนโซฟา ดูทีวี YouTube หรือเดินลงด้านล่างเข้าห้องครัว'
+                          ? 'นั่งพักบนโซฟา ดูทีวี YouTube เดินไปฝั่งซ้ายเข้าห้องนอนใหญ่ หรือเดินลงด้านล่างเข้าห้องครัว'
                           : zone === 'office'
-                            ? 'ห้องทำงาน — เดินเข้าใกล้ มีน่า, Antigravity หรือ Google AI Studio เพื่อดูสถานะและเริ่มคุยงาน'
-                            : zone === 'kitchen'
-                              ? 'ห้องครัวครอบครัว — นั่งเก้าอี้โต๊ะอาหารทั้ง 4 ตัว ฉลองมื้อไก่งวงคริสต์มาสวันครอบครัวอบอุ่น'
-                              : 'ห้องน้ำและห้องอาบน้ำ — วางเมาส์ค้างบนสิ่งของประมาณ 2 วินาที เพื่อดูชื่อและรายละเอียด'}
+                            ? 'ห้องทำงาน — เดินเข้าใกล้ มีน่า, Antigravity หรือ Google AI Studio เพื่อคุยงาน หรือเดินลงด้านล่างเข้าห้องออกกำลังกาย'
+                            : zone === 'gym'
+                              ? 'ห้องออกกำลังกาย — เดินสำรวจแร็คสควอท ม้านั่งยกเวท ดัมเบล ลู่วิ่ง จักรยานปั่น เครื่องกรรเชียงบก และโซนเสื่อโยคะ'
+                              : zone === 'kitchen'
+                                ? 'ห้องครัวครอบครัว — นั่งเก้าอี้โต๊ะอาหารทั้ง 4 ตัว เดินไปฝั่งซ้ายเข้าห้องน้ำ หรือเดินลงด้านล่างไปโถงทางเข้า'
+                                : zone === 'entryway'
+                                  ? 'โถงทางเข้าและทางเดินหน้าบ้าน — รดน้ำกระถางต้นไม้ 5 ต้น (ภารกิจประจำวัน รีเซ็ต 00:00 น.) หรือเปิดตู้ไปรษณีย์ Gmail ริมถนน'
+                                  : zone === 'garage'
+                                    ? 'โรงจอดรถ 2 คัน — ช่องขวารถคันสีแดงไม่อยู่ (เหลือเส้นสีเหลือง) · ช่องซ้ายกด E หรือคลิกรถคันสีเขียวเพื่อขึ้นขับออกถนนได้'
+                                    : zone === 'bedroom'
+                                      ? 'ห้องนอนใหญ่ — นอนพักผ่อนบนเตียงคิงไซส์ (ปิดไฟห้องนอน & วิวกลางคืนหิมะตก) หรือบันทึกการนอน .json ที่โต๊ะข้างเตียงขวา'
+                                      : 'ห้องน้ำและห้องอาบน้ำ — วางเมาส์ค้างบนสิ่งของประมาณ 2 วินาที เพื่อดูชื่อและรายละเอียด'}
                     </span>
                   </div>
                 )}
@@ -1756,7 +2400,35 @@ export default function App() {
 
               {!isWorking && (playerSeat || nearestInteractable) && (
                 <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
-                  {playerSeat ? (
+                  {playerSeat === 'green_car' ? (
+                    <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-[#3B4E4B] bg-[#1A2120]/90 p-1.5 shadow-xl backdrop-blur-xs">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundEngine.playInteract();
+                          setPlayerSeat(null);
+                        }}
+                        className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md bg-[#D97736] px-3 py-1.5 text-xs font-semibold text-[#FAF6F0] transition-colors hover:bg-[#C6682A]"
+                      >
+                        <span className="font-pixel rounded bg-[#231D19]/40 px-1.5 py-0.5 text-[10px]">
+                          E
+                        </span>
+                        <span>จอดและลงจากรถ</span>
+                      </button>
+                      <div className="flex items-center gap-2 px-2 text-xs text-[#D6EAE6]">
+                        <Car className="h-3.5 w-3.5 text-[#7AC4BA]" />
+                        <span className="font-mono font-bold text-[#FDE68A]">
+                          {drivingHud?.gear ?? 'P'}
+                        </span>
+                        <span className="font-mono tabular-nums text-[#FAF6F0]">
+                          {drivingHud?.speedKmh ?? 0} km/h
+                        </span>
+                        <span className="hidden text-[#9BB7B3] sm:inline">
+                          · W/S เดินหน้า–ถอยหลัง · A/D เลี้ยว · Space เบรก · H แตร
+                        </span>
+                      </div>
+                    </div>
+                  ) : playerSeat ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -1773,7 +2445,9 @@ export default function App() {
                           ? 'กำลังนั่งหน้าคอมพิวเตอร์ — ลุกจากโต๊ะ'
                           : playerSeat === 'sofa'
                             ? 'กำลังนั่งพักบนโซฟา — ลุกจากโซฟา'
-                            : 'กำลังนั่งที่โต๊ะอาหารคริสต์มาส — ลุกจากเก้าอี้'}
+                            : playerSeat === 'bedroom_bed'
+                              ? 'กำลังนอนพักผ่อนบนเตียง (ปิดไฟห้องนอน) — ลุกจากเตียง'
+                              : 'กำลังนั่งที่โต๊ะอาหารคริสต์มาส — ลุกจากเก้าอี้'}
                       </span>
                     </button>
                   ) : (
@@ -1787,7 +2461,18 @@ export default function App() {
                           E
                         </span>
                         <span>
-                          {nearestInteractable.label} — {nearestInteractable.actionLabel}
+                          {nearestInteractable.label} —{' '}
+                          {nearestInteractable.id === 'mailbox' && effectiveMailboxUnreadCount > 0
+                            ? `เปิดอ่าน Gmail (${effectiveMailboxUnreadCount} ข้อความใหม่)`
+                            : nearestInteractable.id === 'sleep_log'
+                              ? hasLoggedTodaySleep
+                                ? `${todaySleepSummary?.hudLabel ?? 'บันทึกการนอนแล้ว'} · ดูผล/อัปโหลดเพิ่ม`
+                                : 'ยังไม่ได้บันทึกการนอนวันนี้ (อัปโหลด .json)'
+                              : nearestInteractable.id === 'porch_plants'
+                                ? hasWateredPlantsToday
+                                  ? `รดน้ำแล้ววันนี้ (${todayPlantWaterLabel ?? 'สำเร็จ'}) · รดน้ำเพิ่มอีกครั้ง`
+                                  : 'รดน้ำต้นไม้ทั้ง 5 ต้น (ภารกิจประจำวัน)'
+                                : nearestInteractable.actionLabel}
                         </span>
                       </button>
                     )
@@ -1842,13 +2527,13 @@ export default function App() {
               </div>
               <ul className="mt-3 space-y-2.5 text-xs leading-relaxed text-[#CFC4B6]">
                 <li>
-                  <strong className="text-[#FAF6F0]">WASD / ปุ่มลูกศร:</strong> เดินไปรอบห้องพักผ่อน ห้องทำงาน ห้องครัว และห้องน้ำ
+                  <strong className="text-[#FAF6F0]">WASD / ปุ่มลูกศร:</strong> เดินไปรอบห้องนอนใหญ่ ห้องพักผ่อน ห้องทำงาน ห้องออกกำลังกาย ห้องน้ำ ห้องครัว โถงทางเข้า โรงจอดรถ 2 คัน ทางเดินหน้าบ้าน และถนนหน้าบ้าน
                 </li>
                 <li>
                   <strong className="text-[#FAF6F0]">คลิกบนพื้นหรือเฟอร์นิเจอร์:</strong> เดินไปยังจุดนั้นอัตโนมัติ (ข้ามประตูให้เอง)
                 </li>
                 <li>
-                  <strong className="text-[#FAF6F0]">ปุ่ม E หรือคลิกสิ่งของ:</strong> โต้ตอบกาแฟ โซฟา ทีวี (YouTube) กระดานโน้ต (Google Tasks) โต๊ะเอกสารกลางห้อง (Google Drive) หน้าต่าง หรือชั้นหนังสือ
+                  <strong className="text-[#FAF6F0]">ปุ่ม E หรือคลิกสิ่งของ:</strong> โต้ตอบกาแฟ โซฟา ทีวี (YouTube) กระดานโน้ต (Google Tasks) โต๊ะเอกสารกลางห้อง (Google Drive) ตู้ไปรษณีย์ริมถนน (Gmail) โต๊ะข้างเตียงห้องนอน (ภารกิจการนอน .json + AI) หน้าต่าง หรือชั้นหนังสือ
                 </li>
                 <li>
                   <strong className="text-[#FAF6F0]">ทีม AI ในห้องทำงาน (มีน่า / Antigravity / Google AI Studio):</strong> เดินเข้าใกล้รัศมีตัวละครเพื่อดูป้ายสถานะ Token, งานที่กำลังทำ หรือเหตุผลเมื่อใช้งานไม่ได้ แล้วกด E หรือคลิกที่โต๊ะเพื่อเปิดใช้งาน
@@ -1857,7 +2542,10 @@ export default function App() {
                   <strong className="text-[#FAF6F0]">ซูมและเลือกจุดโฟกัสกล้อง:</strong> หมุนลูกกลิ้งเมาส์ (หรือปุ่ม +/-) เพื่อซูม, ลากบนแผนที่หรือคลิกขวาเพื่อเลือกจุดโฟกัสเอง, กด 0 ดูทั้งบ้าน, กด F แสดงแมพทั้งแมพแบบเต็มจอ หรือกด C เพื่อกลับมาตามตัวละคร
                 </li>
                 <li>
-                  <strong className="text-[#FAF6F0]">สำรวจสิ่งของ (ห้องน้ำ):</strong> วางเมาส์ทาบค้างไว้บนวัตถุในห้องน้ำประมาณ 2 วินาที เพื่อแสดงชื่อและรายละเอียดของสิ่งนั้น
+                  <strong className="text-[#FAF6F0]">ขับรถคันสีเขียว (โรงจอดรถฝั่งซ้าย):</strong> เดินไปใกล้รถแล้วกด E หรือคลิกที่รถเพื่อขึ้นขับ — ใช้ W/S เดินหน้า–ถอยหลัง, A/D เลี้ยว, Space เบรก, H บีบแตร และขับออกไปจนสุดถนนฝั่งซ้ายหรือขวาเพื่อวนทะลุกลับมาอีกฝั่ง
+                </li>
+                <li>
+                  <strong className="text-[#FAF6F0]">สำรวจสิ่งของ (ห้องน้ำ / โรงจอดรถ):</strong> วางเมาส์ทาบค้างไว้บนวัตถุประมาณ 2 วินาที เพื่อแสดงชื่อและรายละเอียดของสิ่งนั้น
                 </li>
                 <li>
                   <strong className="text-[#FAF6F0]">ปุ่ม Esc:</strong> จบการสนทนากลับไปเดินเล่นในบ้าน
@@ -1936,6 +2624,14 @@ export default function App() {
           accessToken={youtubeToken}
           isSigningIn={isSigningInGoogle}
           authError={googleAuthError}
+          runningMinaTaskIds={runningMinaTaskIds}
+          boardRefreshNonce={tasksBoardRefreshNonce}
+          onRunMinaTaskNow={(taskListId, task) =>
+            executeMinaScheduledTask(taskListId, task, { triggerSource: 'manual' })
+          }
+          onTasksChanged={() => {
+            void scanAndRunDueMinaTasks();
+          }}
           onGoogleSignIn={() => void handleGoogleSignIn()}
           onGoogleSignOut={() => void handleGoogleSignOut()}
           onTokenExpired={handleYouTubeTokenExpired}
@@ -1990,6 +2686,40 @@ export default function App() {
           setIsAiStudioOpen(false);
         }}
       />
+      {isMailboxOpen && (
+        <MailboxModal
+          googleUser={googleUser}
+          accessToken={youtubeToken}
+          isSigningIn={isSigningInGoogle}
+          authError={googleAuthError}
+          gmailScopeMissing={gmailScopeMissing}
+          unreadCount={effectiveMailboxUnreadCount}
+          locallyReadIds={locallyReadMailIds}
+          onMarkMessageRead={handleMarkMailRead}
+          onSyncUnreadStatus={() => void syncGmailUnreadStatus()}
+          onGoogleSignIn={() => void handleGoogleSignIn()}
+          onGoogleSignOut={() => void handleGoogleSignOut()}
+          onTokenExpired={handleYouTubeTokenExpired}
+          onGmailScopeError={() => setGmailScopeMissing(true)}
+          onClose={() => {
+            soundEngine.playInteract();
+            setIsMailboxOpen(false);
+          }}
+        />
+      )}
+      {isSleepLogOpen && (
+        <SleepQuestModal
+          logs={sleepLogs}
+          hasLoggedToday={hasLoggedTodaySleep}
+          todaySleepLabel={todaySleepSummary?.hudLabel ?? null}
+          onSaveLog={handleSaveSleepLog}
+          onDeleteLog={handleDeleteSleepLog}
+          onClose={() => {
+            soundEngine.playInteract();
+            setIsSleepLogOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

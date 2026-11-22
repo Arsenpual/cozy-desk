@@ -7,15 +7,26 @@ import {
   CheckCircle2,
   Circle,
   ClipboardList,
+  Clock,
   Edit3,
   Loader2,
   LogOut,
+  Play,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
-import type { GoogleTask, GoogleTaskList } from '../types/game';
+import { ASSETS, type GoogleTask, type GoogleTaskList } from '../types/game';
+import {
+  buildMinaTaskNotes,
+  detectMinaMentionInTitle,
+  getDefaultScheduleTime,
+  parseMinaTaskMeta,
+} from '../utils/minaTaskScheduler';
+import { getLocalIsoDate } from '../utils/sleepLogsApi';
 import {
   createTask,
   deleteTask,
@@ -30,6 +41,10 @@ interface TasksPinboardModalProps {
   accessToken: string | null;
   isSigningIn: boolean;
   authError: string | null;
+  runningMinaTaskIds?: string[];
+  boardRefreshNonce?: number;
+  onRunMinaTaskNow?: (taskListId: string, task: GoogleTask) => Promise<void>;
+  onTasksChanged?: () => void;
   onGoogleSignIn: () => void;
   onGoogleSignOut: () => void;
   onTokenExpired: () => void;
@@ -105,6 +120,10 @@ export function TasksPinboardModal({
   accessToken,
   isSigningIn,
   authError,
+  runningMinaTaskIds = [],
+  boardRefreshNonce = 0,
+  onRunMinaTaskNow,
+  onTasksChanged,
   onGoogleSignIn,
   onGoogleSignOut,
   onTokenExpired,
@@ -126,6 +145,8 @@ export function TasksPinboardModal({
   const [newTitle, setNewTitle] = useState('');
   const [newNotes, setNewNotes] = useState('');
   const [newDueDate, setNewDueDate] = useState('');
+  const [newAssignToMina, setNewAssignToMina] = useState(false);
+  const [newScheduledTime, setNewScheduledTime] = useState(() => getDefaultScheduleTime(2));
   const [showNewOptions, setShowNewOptions] = useState(false);
 
   // Inline edit state
@@ -133,6 +154,9 @@ export function TasksPinboardModal({
   const [editTitle, setEditTitle] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
+  const [editAssignToMina, setEditAssignToMina] = useState(false);
+  const [editScheduledTime, setEditScheduledTime] = useState('09:00');
+  const [editResetMinaRun, setEditResetMinaRun] = useState(false);
 
   // Mandatory explicit user confirmation dialog for all Google Tasks mutations
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
@@ -205,10 +229,29 @@ export function TasksPinboardModal({
     }
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-refresh active task list whenever Mina finishes writing a scheduled summary in the background
+  useEffect(() => {
+    if (boardRefreshNonce > 0 && isAuthenticated && selectedListId) {
+      void loadTasksForList(selectedListId);
+    }
+  }, [boardRefreshNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSelectList = (listId: string) => {
     setSelectedListId(listId);
     setEditingTaskId(null);
     void loadTasksForList(listId);
+  };
+
+  const toggleNewAssignToMina = () => {
+    setNewAssignToMina((prev) => {
+      const next = !prev;
+      if (next) {
+        setShowNewOptions(true);
+        setNewDueDate((curr) => curr || getLocalIsoDate());
+        setNewScheduledTime((curr) => curr || getDefaultScheduleTime(2));
+      }
+      return next;
+    });
   };
 
   const runConfirmedMutation = async () => {
@@ -226,6 +269,9 @@ export function TasksPinboardModal({
     }
   };
 
+  const newTitleMention = useMemo(() => detectMinaMentionInTitle(newTitle), [newTitle]);
+  const isNewTaskAssignedToMina = newAssignToMina || newTitleMention.matched;
+
   const requestCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newTitle.trim();
@@ -233,23 +279,55 @@ export function TasksPinboardModal({
 
     const currentListTitle =
       taskLists.find((l) => l.id === selectedListId)?.title ?? 'Google Tasks';
+    const assignedToMina = newAssignToMina || newTitleMention.matched;
+    const effectiveTime = newAssignToMina
+      ? newScheduledTime || getDefaultScheduleTime(2)
+      : newTitleMention.inlineTime;
+    const effectiveDueDate = newDueDate
+      ? newDueDate
+      : newAssignToMina || Boolean(effectiveTime)
+        ? getLocalIsoDate()
+        : '';
+
+    // When assigned purely via title (e.g. ร่างอีเมล์ "นีน่า") without explicit button/time,
+    // keep notes clean until Mina writes her summary; otherwise include the structured schedule header.
+    const formattedNotes =
+      newAssignToMina || Boolean(effectiveTime)
+        ? buildMinaTaskNotes({
+            assignedToMina: true,
+            scheduledTime: effectiveTime,
+            status: 'pending',
+            userPromptNotes: newNotes,
+          })
+        : newNotes.trim();
+
+    const scheduleHint = assignedToMina
+      ? effectiveDueDate || effectiveTime
+        ? ` โดยมอบหมายให้มีน่าทำอัตโนมัติ${effectiveDueDate ? `วันที่ ${formatDueDate(effectiveDueDate) ?? effectiveDueDate}` : ''}${effectiveTime ? ` เวลา ${effectiveTime} น.` : ''} และเขียนสรุปลงโน้ตไว้ให้คุณตรวจงานเอง`
+        : ' โดยมอบหมายให้มีน่าเริ่มทำทันทีและเขียนสรุปลงโน้ตไว้ให้คุณตรวจงานเอง'
+      : '';
 
     setPendingConfirm({
-      title: 'ยืนยันการเพิ่มงานลง Google Tasks',
-      description: `ต้องการสร้างงาน "${trimmed}" ในรายการ "${currentListTitle}" ของบัญชี Google Tasks หรือไม่?`,
-      confirmLabel: 'เพิ่มงาน',
+      title: assignedToMina
+        ? 'ยืนยันการสั่งงานมีน่าลง Google Tasks'
+        : 'ยืนยันการเพิ่มงานลง Google Tasks',
+      description: `ต้องการสร้างงาน "${trimmed}" ในรายการ "${currentListTitle}"${scheduleHint} หรือไม่?`,
+      confirmLabel: assignedToMina ? 'สั่งงานมีน่า' : 'เพิ่มงาน',
       tone: 'primary',
       execute: async () => {
         const created = await createTask(accessToken, selectedListId, {
           title: trimmed,
-          notes: newNotes,
-          dueDate: newDueDate || undefined,
+          notes: formattedNotes,
+          dueDate: effectiveDueDate || undefined,
         });
         setTasks((prev) => [created, ...prev]);
         setNewTitle('');
         setNewNotes('');
         setNewDueDate('');
+        setNewAssignToMina(false);
+        setNewScheduledTime(getDefaultScheduleTime(2));
         setShowNewOptions(false);
+        onTasksChanged?.();
       },
     });
   };
@@ -274,20 +352,43 @@ export function TasksPinboardModal({
           status: nextStatus,
         });
         setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+        onTasksChanged?.();
       },
     });
   };
 
   const startEditing = (task: GoogleTask) => {
+    const meta = parseMinaTaskMeta(task);
     setEditingTaskId(task.id);
     setEditTitle(task.title);
-    setEditNotes(task.notes ?? '');
+    setEditNotes(meta.userPromptNotes);
     setEditDueDate(task.due ? task.due.slice(0, 10) : '');
+    setEditAssignToMina(meta.assignedToMina);
+    setEditScheduledTime(meta.scheduledTime ?? getDefaultScheduleTime(2));
+    setEditResetMinaRun(false);
   };
 
   const requestSaveEdit = (task: GoogleTask) => {
     const trimmed = editTitle.trim();
     if (!trimmed || !accessToken || !selectedListId) return;
+
+    const existingMeta = parseMinaTaskMeta(task);
+    const effectiveDueDate = editAssignToMina
+      ? editDueDate || getLocalIsoDate()
+      : editDueDate;
+    const effectiveTime = editAssignToMina ? editScheduledTime || '09:00' : null;
+    const keepSummary =
+      editAssignToMina && !editResetMinaRun && existingMeta.status === 'ready_for_review';
+
+    const nextNotes = buildMinaTaskNotes({
+      assignedToMina: editAssignToMina,
+      scheduledTime: effectiveTime,
+      status: keepSummary ? 'ready_for_review' : 'pending',
+      completedAtLabel: keepSummary ? existingMeta.completedAtLabel : null,
+      userPromptNotes: editNotes,
+      minaSummary: keepSummary ? existingMeta.minaSummary : null,
+      minaSummaryHeader: keepSummary ? existingMeta.minaSummaryHeader : null,
+    });
 
     setPendingConfirm({
       title: 'ยืนยันการบันทึกการแก้ไขงาน',
@@ -297,11 +398,12 @@ export function TasksPinboardModal({
       execute: async () => {
         const updated = await updateTask(accessToken, selectedListId, task.id, {
           title: trimmed,
-          notes: editNotes,
-          dueDate: editDueDate || null,
+          notes: nextNotes,
+          dueDate: effectiveDueDate || null,
         });
         setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
         setEditingTaskId(null);
+        onTasksChanged?.();
       },
     });
   };
@@ -320,6 +422,7 @@ export function TasksPinboardModal({
         if (editingTaskId === task.id) {
           setEditingTaskId(null);
         }
+        onTasksChanged?.();
       },
     });
   };
@@ -327,11 +430,21 @@ export function TasksPinboardModal({
   const counts = useMemo(() => {
     let pending = 0;
     let completed = 0;
+    let minaScheduled = 0;
+    let minaReview = 0;
     for (const t of tasks) {
-      if (t.status === 'completed') completed += 1;
-      else pending += 1;
+      if (t.status === 'completed') {
+        completed += 1;
+      } else {
+        pending += 1;
+        const meta = parseMinaTaskMeta(t);
+        if (meta.assignedToMina) {
+          if (meta.status === 'ready_for_review') minaReview += 1;
+          else minaScheduled += 1;
+        }
+      }
     }
-    return { pending, completed, all: tasks.length };
+    return { pending, completed, all: tasks.length, minaScheduled, minaReview };
   }, [tasks]);
 
   const filteredTasks = useMemo(() => {
@@ -494,7 +607,7 @@ export function TasksPinboardModal({
               </div>
             </div>
 
-            {/* Add New Task Composer */}
+            {/* Add New Task Composer (supports typing activity + "มีน่า"/"นีน่า" or explicit schedule toggle) */}
             <form
               onSubmit={requestCreateTask}
               className="shrink-0 border-b border-[#E2D9CC] bg-[#FAF6F0] px-5 py-3.5"
@@ -505,36 +618,125 @@ export function TasksPinboardModal({
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   onFocus={() => setShowNewOptions(true)}
-                  placeholder="ปักโน้ตงานใหม่ลง Google Tasks..."
+                  placeholder={
+                    isNewTaskAssignedToMina
+                      ? 'เช่น ร่างอีเมล์ "มีน่า" 14:30 หรือพิมพ์คำสั่งเพิ่มเติมด้านล่าง...'
+                      : 'ปักโน้ตงานใหม่ หรือฝังชื่อผู้ช่วย เช่น ร่างอีเมล์ "มีน่า"...'
+                  }
                   disabled={isMutating || !selectedListId}
                   className="h-10 min-w-0 flex-1 rounded-lg border border-[#D4C6B4] bg-white px-3.5 text-sm text-[#29221D] placeholder:text-[#96897D] focus:border-[#D97736] focus:outline-none disabled:opacity-60"
                 />
+                <button
+                  type="button"
+                  onClick={toggleNewAssignToMina}
+                  disabled={isMutating || !selectedListId}
+                  className={`inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-semibold transition-colors disabled:opacity-60 ${
+                    isNewTaskAssignedToMina
+                      ? 'border-[#3F6F62] bg-[#E5F2EE] text-[#285247]'
+                      : 'border-[#D4C6B4] bg-white text-[#5C5046] hover:bg-[#F3ECE2]'
+                  }`}
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-[#3F6F62]" />
+                  <span>
+                    {newAssignToMina
+                      ? 'ตั้งเวลามีน่าแล้ว'
+                      : newTitleMention.matched
+                        ? 'พบชื่อมีน่า · ตั้งเวลาเพิ่ม'
+                        : 'สั่งงานมีน่า'}
+                  </span>
+                </button>
                 <button
                   type="submit"
                   disabled={!newTitle.trim() || isMutating || !selectedListId}
                   className="inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-[#D97736] px-4 text-xs font-semibold text-[#FAF6F0] transition-colors hover:bg-[#C6682A] disabled:cursor-not-allowed disabled:bg-[#CFC4B6]"
                 >
                   <Plus className="h-4 w-4" />
-                  <span>เพิ่มงาน</span>
+                  <span>
+                    {newAssignToMina
+                      ? 'ตั้งเวลาสั่งมีน่า'
+                      : newTitleMention.matched
+                        ? 'สั่งงานมีน่า'
+                        : 'เพิ่มงาน'}
+                  </span>
                 </button>
               </div>
 
-              {showNewOptions && (
-                <div className="mt-2.5 flex flex-col gap-2 sm:flex-row">
-                  <input
-                    type="text"
-                    value={newNotes}
-                    onChange={(e) => setNewNotes(e.target.value)}
-                    placeholder="รายละเอียดเพิ่มเติม (ไม่บังคับ)"
-                    className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDD1C2] bg-white px-3 text-xs text-[#29221D] placeholder:text-[#96897D] focus:border-[#D97736] focus:outline-none"
-                  />
-                  <input
-                    type="date"
-                    value={newDueDate}
-                    onChange={(e) => setNewDueDate(e.target.value)}
-                    aria-label="วันครบกำหนด"
-                    className="h-9 rounded-lg border border-[#DDD1C2] bg-white px-3 text-xs tabular-nums text-[#29221D] focus:border-[#D97736] focus:outline-none"
-                  />
+              {(showNewOptions || isNewTaskAssignedToMina) && (
+                <div className="mt-2.5 space-y-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="text"
+                      value={newNotes}
+                      onChange={(e) => setNewNotes(e.target.value)}
+                      placeholder={
+                        isNewTaskAssignedToMina
+                          ? 'คำสั่งหรือรายละเอียดให้มีน่าทำ (เช่น เนื้อหาอีเมลที่ต้องการ / หัวข้อสรุป)...'
+                          : 'รายละเอียดเพิ่มเติม (ไม่บังคับ)'
+                      }
+                      className="h-9 min-w-0 flex-1 rounded-lg border border-[#DDD1C2] bg-white px-3 text-xs text-[#29221D] placeholder:text-[#96897D] focus:border-[#D97736] focus:outline-none"
+                    />
+                    <input
+                      type="date"
+                      value={newDueDate}
+                      onChange={(e) => setNewDueDate(e.target.value)}
+                      aria-label="วันครบกำหนด"
+                      className="h-9 rounded-lg border border-[#DDD1C2] bg-white px-3 text-xs tabular-nums text-[#29221D] focus:border-[#D97736] focus:outline-none"
+                    />
+                    {newAssignToMina && (
+                      <input
+                        type="time"
+                        value={newScheduledTime}
+                        onChange={(e) => setNewScheduledTime(e.target.value)}
+                        aria-label="เวลาที่ให้มีน่าเริ่มทำงาน"
+                        className="h-9 rounded-lg border border-[#9DC3B8] bg-white px-3 text-xs font-medium tabular-nums text-[#1F3F37] focus:border-[#3F6F62] focus:outline-none"
+                      />
+                    )}
+                  </div>
+
+                  {isNewTaskAssignedToMina && (
+                    <div className="flex items-center gap-2 rounded-lg border border-[#C6DFD7] bg-[#EDF6F3] px-3 py-2 text-[11px] leading-relaxed text-[#2D554B]">
+                      <img
+                        src={ASSETS.minaPortrait}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        className="pixelated h-5 w-5 shrink-0 rounded border border-[#9DC3B8] object-cover"
+                      />
+                      <span>
+                        {newTitleMention.matched && !newAssignToMina ? (
+                          <>
+                            ตรวจพบชื่อผู้ช่วยในชื่องาน (<strong>{newTitleMention.cleanTitle}</strong>) — <strong>มีน่า</strong> จะทำ
+                            {newTitleMention.inlineTime
+                              ? `ตอนเวลา ${newTitleMention.inlineTime} น.`
+                              : newDueDate
+                                ? `ตามวันที่ ${formatDueDate(newDueDate) ?? newDueDate}`
+                                : 'ทันที'}
+                            และเขียนสรุปลงโน้ตไว้ให้คุณตรวจแล้วติ๊กเสร็จเองครับ
+                          </>
+                        ) : (
+                          <>
+                            เมื่อถึงวันและเวลาที่ตั้งไว้ <strong>มีน่า</strong> จะลงมือทำงานและเขียนสรุปผลงานลงในโน้ตของ Task นี้ให้อัตโนมัติ (โดยยังไม่ติ๊กเสร็จ เพื่อให้คุณตรวจงานและติ๊กเองครับ)
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(counts.minaScheduled > 0 || counts.minaReview > 0) && (
+                <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px]">
+                  {counts.minaReview > 0 && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-[#9DC3B8] bg-[#E5F2EE] px-2.5 py-1 font-semibold text-[#234C42]">
+                      <Sparkles className="h-3 w-3 text-[#2E7D6B]" />
+                      <span>มีน่าส่งงานรอตรวจ {counts.minaReview} รายการ</span>
+                    </span>
+                  )}
+                  {counts.minaScheduled > 0 && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-[#E2D2B8] bg-[#FBF4E7] px-2.5 py-1 font-medium text-[#7B5224]">
+                      <Clock className="h-3 w-3 text-[#C87A2B]" />
+                      <span>ตั้งเวลาให้มีน่าไว้ {counts.minaScheduled} รายการ</span>
+                    </span>
+                  )}
                 </div>
               )}
             </form>
@@ -554,7 +756,7 @@ export function TasksPinboardModal({
                       : 'ยังไม่มีรายการงานค้างอยู่'}
                   </p>
                   <p className="mt-1.5 text-xs leading-relaxed text-[#6E6258]">
-                    พิมพ์ชื่องานในช่องด้านบนเพื่อปักโน้ตงานใหม่ลง Google Tasks ได้เลยครับ
+                    พิมพ์ชื่องานด้านบนเพื่อปักโน้ตงานใหม่ หรือกดปุ่ม &ldquo;สั่งงานมีน่า&rdquo; เพื่อตั้งเวลาให้มีน่าทำงานแทนได้เลยครับ
                   </p>
                 </div>
               ) : (
@@ -563,6 +765,10 @@ export function TasksPinboardModal({
                     const isDone = task.status === 'completed';
                     const isEditing = editingTaskId === task.id;
                     const dueLabel = formatDueDate(task.due);
+                    const meta = parseMinaTaskMeta(task);
+                    const isMinaRunning = runningMinaTaskIds.includes(task.id);
+                    const isWaitingReview =
+                      !isDone && meta.assignedToMina && meta.status === 'ready_for_review';
 
                     return (
                       <article
@@ -570,7 +776,9 @@ export function TasksPinboardModal({
                         className={`flex flex-col justify-between rounded-xl border p-4 shadow-xs transition-colors ${
                           isDone
                             ? 'border-[#DCD2C5] bg-[#F5EFE7]/90'
-                            : 'border-[#E5D3B3] bg-[#FFFDF7]'
+                            : isWaitingReview
+                              ? 'border-[#7EB3A4] bg-[#F8FDFB]'
+                              : 'border-[#E5D3B3] bg-[#FFFDF7]'
                         }`}
                       >
                         {isEditing ? (
@@ -585,81 +793,210 @@ export function TasksPinboardModal({
                               rows={2}
                               value={editNotes}
                               onChange={(e) => setEditNotes(e.target.value)}
-                              placeholder="รายละเอียดเพิ่มเติม..."
+                              placeholder={
+                                editAssignToMina
+                                  ? 'คำสั่งหรือรายละเอียดสำหรับมีน่า...'
+                                  : 'รายละเอียดเพิ่มเติม...'
+                              }
                               className="w-full resize-none rounded-lg border border-[#D4C6B4] bg-white px-3 py-1.5 text-xs text-[#3D342D] focus:border-[#D97736] focus:outline-none"
                             />
-                            <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditAssignToMina((prev) => {
+                                    const next = !prev;
+                                    if (next && !editDueDate) {
+                                      setEditDueDate(getLocalIsoDate());
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                                  editAssignToMina
+                                    ? 'border-[#3F6F62] bg-[#E5F2EE] text-[#285247]'
+                                    : 'border-[#D4C6B4] bg-white text-[#5C5046] hover:bg-[#F2EAE0]'
+                                }`}
+                              >
+                                <Sparkles className="h-3 w-3" />
+                                <span>{editAssignToMina ? 'มอบหมายมีน่า' : 'สั่งงานมีน่า'}</span>
+                              </button>
                               <input
                                 type="date"
                                 value={editDueDate}
                                 onChange={(e) => setEditDueDate(e.target.value)}
                                 className="rounded-lg border border-[#D4C6B4] bg-white px-2.5 py-1 text-xs tabular-nums text-[#29221D]"
                               />
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingTaskId(null)}
-                                  className="cursor-pointer rounded-lg border border-[#D4C6B4] bg-white px-3 py-1.5 text-xs font-medium text-[#5C5046] hover:bg-[#F2EAE0]"
-                                >
-                                  ยกเลิก
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => requestSaveEdit(task)}
-                                  disabled={!editTitle.trim() || isMutating}
-                                  className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-[#4D7C6F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3F685D] disabled:opacity-50"
-                                >
-                                  <Check className="h-3.5 w-3.5" />
-                                  <span>บันทึก</span>
-                                </button>
-                              </div>
+                              {editAssignToMina && (
+                                <input
+                                  type="time"
+                                  value={editScheduledTime}
+                                  onChange={(e) => setEditScheduledTime(e.target.value)}
+                                  className="rounded-lg border border-[#9DC3B8] bg-white px-2.5 py-1 text-xs tabular-nums text-[#1F3F37]"
+                                />
+                              )}
+                            </div>
+
+                            {editAssignToMina && meta.status === 'ready_for_review' && (
+                              <label className="flex cursor-pointer items-center gap-2 text-[11px] text-[#4C423A]">
+                                <input
+                                  type="checkbox"
+                                  checked={editResetMinaRun}
+                                  onChange={(e) => setEditResetMinaRun(e.target.checked)}
+                                  className="rounded border-[#C8B9A6] accent-[#4D7C6F]"
+                                />
+                                <span>ตั้งเวลารอบใหม่ (ล้างสรุปเดิมเพื่อให้มีน่าทำซ้ำเมื่อถึงเวลา)</span>
+                              </label>
+                            )}
+
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingTaskId(null)}
+                                className="cursor-pointer rounded-lg border border-[#D4C6B4] bg-white px-3 py-1.5 text-xs font-medium text-[#5C5046] hover:bg-[#F2EAE0]"
+                              >
+                                ยกเลิก
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => requestSaveEdit(task)}
+                                disabled={!editTitle.trim() || isMutating}
+                                className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-[#4D7C6F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3F685D] disabled:opacity-50"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                                <span>บันทึก</span>
+                              </button>
                             </div>
                           </div>
                         ) : (
                           <>
-                            <div className="flex items-start gap-3">
-                              <button
-                                type="button"
-                                onClick={() => requestToggleStatus(task)}
-                                disabled={isMutating}
-                                aria-label={
-                                  isDone
-                                    ? `เปิดงาน ${task.title} กลับมาทำ`
-                                    : `ติ๊กงาน ${task.title} ว่าเสร็จแล้ว`
-                                }
-                                className="mt-0.5 shrink-0 cursor-pointer text-[#6E6258] transition-colors hover:text-[#4D7C6F] disabled:opacity-50"
-                              >
-                                {isDone ? (
-                                  <CheckCircle2 className="h-5 w-5 text-[#4D7C6F]" />
-                                ) : (
-                                  <Circle className="h-5 w-5" />
-                                )}
-                              </button>
-
-                              <div className="min-w-0 flex-1">
-                                <h3
-                                  className={`text-sm font-semibold leading-snug ${
-                                    isDone
-                                      ? 'text-[#8C8075] line-through'
-                                      : 'text-[#29221D]'
+                            <div className="space-y-2.5">
+                              {/* Mina scheduled status banner */}
+                              {meta.assignedToMina && (
+                                <div
+                                  className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold ${
+                                    isMinaRunning
+                                      ? 'border border-[#D8B480] bg-[#FEF6E8] text-[#8A5416]'
+                                      : isDone
+                                        ? 'border border-[#D8CFC3] bg-[#EFE9E0] text-[#6E6258]'
+                                        : isWaitingReview
+                                          ? 'border border-[#9DC3B8] bg-[#E3F3EE] text-[#1F5347]'
+                                          : 'border border-[#C9DBD5] bg-[#EEF6F4] text-[#2D5A4F]'
                                   }`}
                                 >
-                                  {task.title}
-                                </h3>
-                                {task.notes && (
-                                  <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-[#63574D]">
-                                    {task.notes}
-                                  </p>
-                                )}
+                                  <div className="flex min-w-0 items-center gap-1.5">
+                                    {isMinaRunning ? (
+                                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#C87A2B]" />
+                                    ) : (
+                                      <img
+                                        src={ASSETS.minaPortrait}
+                                        alt=""
+                                        referrerPolicy="no-referrer"
+                                        className="pixelated h-4 w-4 shrink-0 rounded-xs border border-[#9DC3B8] object-cover"
+                                      />
+                                    )}
+                                    <span className="truncate">
+                                      {isMinaRunning
+                                        ? 'มีน่ากำลังทำงานและเขียนสรุปลงโน้ต...'
+                                        : isDone
+                                          ? 'มอบหมายมีน่า · ตรวจงานและติ๊กเสร็จแล้ว'
+                                          : isWaitingReview
+                                            ? `มีน่าสรุปงานแล้ว · รอคุณตรวจแล้วติ๊กเสร็จ`
+                                            : `มอบหมายมีน่า · รอเวลา ${meta.scheduledTime ? `${meta.scheduledTime} น.` : 'ตามกำหนด'}`}
+                                    </span>
+                                  </div>
+                                  {isWaitingReview && meta.completedAtLabel && (
+                                    <span className="shrink-0 text-[10px] font-normal tabular-nums text-[#356B5E]">
+                                      {meta.completedAtLabel}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              <div className="flex items-start gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => requestToggleStatus(task)}
+                                  disabled={isMutating || isMinaRunning}
+                                  aria-label={
+                                    isDone
+                                      ? `เปิดงาน ${task.title} กลับมาทำ`
+                                      : `ติ๊กงาน ${task.title} ว่าเสร็จแล้ว`
+                                  }
+                                  title={
+                                    isWaitingReview
+                                      ? 'ตรวจสรุปจากมีน่าเสร็จแล้ว? กดเพื่อติ๊กงานนี้ว่าเสร็จสิ้น'
+                                      : isDone
+                                        ? 'เปิดงานกลับมาทำ'
+                                        : 'ติ๊กงานนี้ว่าเสร็จสิ้น'
+                                  }
+                                  className={`mt-0.5 shrink-0 cursor-pointer transition-colors disabled:opacity-50 ${
+                                    isWaitingReview
+                                      ? 'text-[#2E7D6B] hover:text-[#1E5C4E]'
+                                      : 'text-[#6E6258] hover:text-[#4D7C6F]'
+                                  }`}
+                                >
+                                  {isDone ? (
+                                    <CheckCircle2 className="h-5 w-5 text-[#4D7C6F]" />
+                                  ) : (
+                                    <Circle className="h-5 w-5" />
+                                  )}
+                                </button>
+
+                                <div className="min-w-0 flex-1">
+                                  <h3
+                                    className={`text-sm font-semibold leading-snug ${
+                                      isDone
+                                        ? 'text-[#8C8075] line-through'
+                                        : 'text-[#29221D]'
+                                    }`}
+                                  >
+                                    {task.title}
+                                  </h3>
+                                  {meta.userPromptNotes && (
+                                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-[#63574D]">
+                                      {meta.userPromptNotes}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
+
+                              {/* Mina's written work summary block (stored in Task notes) */}
+                              {meta.minaSummary && (
+                                <div className="rounded-lg border border-[#C6DFD7] bg-[#F1F9F6] p-3">
+                                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#225045]">
+                                      <Sparkles className="h-3 w-3 text-[#3A8472]" />
+                                      <span>สรุปผลงานจากมีน่า</span>
+                                    </span>
+                                    {meta.minaSummaryHeader && (
+                                      <span className="text-[10px] tabular-nums text-[#53786E]">
+                                        {meta.minaSummaryHeader}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="cozy-scroll max-h-44 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-[#2C3A36]">
+                                    {meta.minaSummary}
+                                  </div>
+                                  {!isDone && (
+                                    <p className="mt-2 border-t border-[#D6EAE3] pt-1.5 text-[10px] text-[#457267]">
+                                      ตรวจงานเรียบร้อยแล้ว กดวงกลมด้านซ้ายเพื่อติ๊กเสร็จด้วยตัวเองได้เลยครับ
+                                    </p>
+                                  )}
+                                </div>
+                              )}
                             </div>
 
-                            <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#EFE5D7] pt-2.5 text-xs text-[#7D7065]">
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#EFE5D7] pt-2.5 text-xs text-[#7D7065]">
                               <div className="flex items-center gap-1.5 tabular-nums">
                                 {dueLabel ? (
                                   <>
                                     <Calendar className="h-3.5 w-3.5 text-[#D97736]" />
-                                    <span>ครบกำหนด {dueLabel}</span>
+                                    <span>
+                                      {meta.assignedToMina && meta.scheduledTime
+                                        ? `${dueLabel} · ${meta.scheduledTime} น.`
+                                        : `ครบกำหนด ${dueLabel}`}
+                                    </span>
                                   </>
                                 ) : (
                                   <span>{isDone ? 'เสร็จสิ้นแล้ว' : 'กำลังดำเนินการ'}</span>
@@ -667,21 +1004,49 @@ export function TasksPinboardModal({
                               </div>
 
                               <div className="flex items-center gap-1">
+                                {!isDone && meta.assignedToMina && onRunMinaTaskNow && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void onRunMinaTaskNow(selectedListId, task)}
+                                    disabled={isMutating || isMinaRunning}
+                                    title={
+                                      isWaitingReview
+                                        ? 'ให้มีน่าสรุปงานนี้ใหม่อีกครั้ง'
+                                        : 'ไม่ต้องรอถึงเวลา — สั่งให้มีน่าทำทันที'
+                                    }
+                                    className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-[#B8D5CC] bg-[#EDF6F3] px-2 py-1 text-[11px] font-semibold text-[#255549] transition-colors hover:bg-[#DFEFEA] disabled:opacity-50"
+                                  >
+                                    {isMinaRunning ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : isWaitingReview ? (
+                                      <RotateCcw className="h-3 w-3" />
+                                    ) : (
+                                      <Play className="h-3 w-3" />
+                                    )}
+                                    <span>
+                                      {isMinaRunning
+                                        ? 'กำลังทำ'
+                                        : isWaitingReview
+                                          ? 'สรุปใหม่'
+                                          : 'ทำตอนนี้'}
+                                    </span>
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => startEditing(task)}
-                                  disabled={isMutating}
+                                  disabled={isMutating || isMinaRunning}
                                   aria-label={`แก้ไขงาน ${task.title}`}
-                                  className="cursor-pointer rounded-md p-1.5 text-[#6E6258] transition-colors hover:bg-[#EFE5D7] hover:text-[#29221D]"
+                                  className="cursor-pointer rounded-md p-1.5 text-[#6E6258] transition-colors hover:bg-[#EFE5D7] hover:text-[#29221D] disabled:opacity-40"
                                 >
                                   <Edit3 className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => requestDeleteTask(task)}
-                                  disabled={isMutating}
+                                  disabled={isMutating || isMinaRunning}
                                   aria-label={`ลบงาน ${task.title}`}
-                                  className="cursor-pointer rounded-md p-1.5 text-[#7A6D62] transition-colors hover:bg-[#FDF2EF] hover:text-[#B5472A]"
+                                  className="cursor-pointer rounded-md p-1.5 text-[#7A6D62] transition-colors hover:bg-[#FDF2EF] hover:text-[#B5472A] disabled:opacity-40"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </button>
