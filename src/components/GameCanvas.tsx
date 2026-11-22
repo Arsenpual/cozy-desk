@@ -22,6 +22,7 @@ import type {
   TimeOfDay,
 } from '../types/game';
 import {
+  AGY_STAND_POS,
   CAMERA_BASE_SCALE,
   CAMERA_DEFAULT_ZOOM,
   CAMERA_MAX_ZOOM,
@@ -33,12 +34,15 @@ import {
   getRoomZone,
   INTERACTABLES,
   isPointInShowerWetZone,
+  LOWER_EAST_WALL_COL,
+  MID_WALL_ROW,
   MINA_APPROACH_RADIUS,
   MINA_GREET_STOP_DIST,
   MINA_LEAVE_RADIUS,
   MINA_MAX_ROAM_RADIUS,
   MINA_PINBOARD_SPOT,
   MINA_POS,
+  OFFICE_EAST_WALL_COL,
   PLAYER_START,
   ROOM_CAMERA_TARGETS,
   SHOWER_STAND_POS,
@@ -71,6 +75,7 @@ interface GameCanvasProps {
   extraPinCount: number;
   isTvOn: boolean;
   isDriveOpen: boolean;
+  isAntigravityOpen?: boolean;
   isModalOpen: boolean;
   isFullscreenMap?: boolean;
   onZoneChange: (zone: RoomZone) => void;
@@ -285,6 +290,7 @@ export function GameCanvas({
   extraPinCount,
   isTvOn,
   isDriveOpen,
+  isAntigravityOpen = false,
   isModalOpen,
   isFullscreenMap = false,
   onZoneChange,
@@ -436,6 +442,7 @@ export function GameCanvas({
     extraPinCount,
     isTvOn,
     isDriveOpen,
+    isAntigravityOpen,
     isModalOpen,
     isFullscreenMap,
     onZoneChange,
@@ -459,6 +466,7 @@ export function GameCanvas({
     extraPinCount,
     isTvOn,
     isDriveOpen,
+    isAntigravityOpen,
     isModalOpen,
     isFullscreenMap,
     onZoneChange,
@@ -1607,6 +1615,7 @@ export function GameCanvas({
           isWorking: state === 'WORKING',
           isTvOn: tvOn,
           isDriveOpen: propsRef.current.isDriveOpen,
+          isAntigravityOpen: propsRef.current.isAntigravityOpen,
           camera: { x: cam.x, y: cam.y, zoom: cam.zoom },
           inspectHover,
           viewW: vp.viewW,
@@ -1781,9 +1790,13 @@ export function GameCanvas({
 
     const clickedObj = getInteractableAtPoint(wx, wy);
 
-    // Allow clicking the office cork pinboard or central Drive table directly while conversing
+    // Allow clicking the office cork pinboard, central Drive table, or Antigravity station directly while conversing
     if (propsRef.current.gameState === 'WORKING') {
-      if (clickedObj?.id === 'pinboard' || clickedObj?.id === 'drive_table') {
+      if (
+        clickedObj?.id === 'pinboard' ||
+        clickedObj?.id === 'drive_table' ||
+        clickedObj?.id === 'antigravity_desk'
+      ) {
         propsRef.current.onInteract(clickedObj.id);
       }
       return;
@@ -1856,7 +1869,7 @@ export function GameCanvas({
         return;
       }
       const targetSpot = {
-        x: 15.35 * TILE,
+        x: MINA_POS.x - 1.35 * TILE,
         y: MINA_POS.y,
       };
       waypointsRef.current = findWalkablePath(player.x, player.y, targetSpot.x, targetSpot.y);
@@ -1885,8 +1898,10 @@ export function GameCanvas({
           : clickedObj.id === 'sofa'
             ? { x: SOFA_STAND_POS.x, y: SOFA_STAND_POS.y }
             : clickedObj.id === 'pinboard'
-              ? { x: 13.8 * TILE, y: WORK_STAND_POS.y }
-              : clickedObj.id === 'drive_table'
+              ? { x: MINA_PINBOARD_SPOT.x, y: 2.85 * TILE }
+              : clickedObj.id === 'antigravity_desk'
+                ? { x: AGY_STAND_POS.x, y: AGY_STAND_POS.y }
+                : clickedObj.id === 'drive_table'
                 ? {
                     x: clickedObj.x + clickedObj.w / 2,
                     y:
@@ -1915,9 +1930,12 @@ export function GameCanvas({
     // (Clicking inside the bathroom shower wet-zone routes directly to the automatic shower spot)
     const clickedInShower =
       wx >= 15.52 * TILE && wx <= 18.98 * TILE && wy >= 14.0 * TILE && wy <= 18.02 * TILE;
+    const maxWalkX =
+      (wy < (MID_WALL_ROW + 1) * TILE ? OFFICE_EAST_WALL_COL - 0.35 : LOWER_EAST_WALL_COL - 0.35) *
+      TILE;
     const clampedX = clickedInShower
       ? SHOWER_STAND_POS.x
-      : Math.max(1.35 * TILE, Math.min(18.65 * TILE, wx));
+      : Math.max(1.35 * TILE, Math.min(maxWalkX, wx));
     const clampedY = clickedInShower
       ? SHOWER_STAND_POS.y
       : Math.max(2.35 * TILE, Math.min((SOUTH_WALL_ROW - 0.45) * TILE, wy));

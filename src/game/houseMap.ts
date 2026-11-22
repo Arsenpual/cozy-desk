@@ -1,9 +1,14 @@
 import type { InteractableObject, Rect, RoomZone } from '../types/game';
 
 export const TILE = 32;
-export const MAP_COLS = 20;
+// Asymmetric floorplan: Home Office (upper-right) is expanded +50% wider (12 interior cols: 11..22)
+// while Living Room (9 cols: 1..9), Kitchen (9 cols: 1..9), and Bathroom (8 cols: 11..18) keep their original sizes.
+export const OFFICE_EAST_WALL_COL = 23;
+export const LOWER_EAST_WALL_COL = 19;
+export const MAP_COLS = OFFICE_EAST_WALL_COL + 1; // 24
 export const MAP_ROWS = 23;
-export const WORLD_W = MAP_COLS * TILE; // 640
+export const WORLD_W = MAP_COLS * TILE; // 768
+export const LOWER_WORLD_W = (LOWER_EAST_WALL_COL + 1) * TILE; // 640
 export const WORLD_H = MAP_ROWS * TILE; // 736
 
 // Widescreen camera viewport (1.5x base resolution of 640x416 for crisp pixel & overview rendering)
@@ -13,11 +18,11 @@ export const CAMERA_BASE_SCALE = 1.5;
 export const CAMERA_MIN_ZOOM = Math.min(
   VIEW_W / (WORLD_W * CAMERA_BASE_SCALE),
   VIEW_H / (WORLD_H * CAMERA_BASE_SCALE)
-); // ~0.565 (fits entire 4-room house cleanly)
+); // ~0.565 (fits entire asymmetric 4-room house cleanly)
 export const CAMERA_MAX_ZOOM = 2.0;
 export const CAMERA_DEFAULT_ZOOM = 1.15;
 
-// Crisp 2x full-map viewport dimensions (fits the entire 640x736 house at exact 2:1 integer scale)
+// Crisp 2x full-map viewport dimensions
 export const FULLMAP_VIEW_W = WORLD_W * 2;
 export const FULLMAP_VIEW_H = WORLD_H * 2;
 export const FULLMAP_BASE_SCALE = 2;
@@ -26,7 +31,7 @@ export const FULLMAP_MIN_ZOOM = 1.0;
 export const ROOM_CAMERA_TARGETS = {
   overview: { x: WORLD_W / 2, y: WORLD_H / 2, zoom: CAMERA_MIN_ZOOM },
   living: { x: 5.2 * TILE, y: 6.3 * TILE, zoom: 1.2 },
-  office: { x: 14.8 * TILE, y: 6.3 * TILE, zoom: 1.2 },
+  office: { x: 16.8 * TILE, y: 6.4 * TILE, zoom: 1.08 },
   kitchen: { x: 5.2 * TILE, y: 17.5 * TILE, zoom: 1.28 },
   bathroom: { x: 14.8 * TILE, y: 17.5 * TILE, zoom: 1.28 },
 } as const;
@@ -55,12 +60,12 @@ export const PLAYER_START = {
 
 // Player's own Home Office computer desk seat & stand-up coordinates (aligned dead-center with monitor)
 export const WORK_SEAT_POS = {
-  x: 14.16 * TILE,
-  y: 5.08 * TILE,
+  x: 17.56 * TILE,
+  y: 4.92 * TILE,
 };
 export const WORK_STAND_POS = {
-  x: 14.16 * TILE,
-  y: 5.85 * TILE,
+  x: 17.56 * TILE,
+  y: 5.72 * TILE,
 };
 
 // Living Room cozy sofa seat & stand-up coordinates
@@ -91,12 +96,12 @@ export const SHOWER_SOAP_HOLDER_POS = {
   y: 15.1 * TILE,
 };
 
-// Large central Home Office document & reference work table (organic off-center placement with clear aisles all around)
+// Large central Home Office document & reference work table (centered in expanded 12-col office with generous aisles)
 export const CENTER_TABLE_RECT: Rect = {
-  x: 12.22 * TILE,
-  y: 7.42 * TILE,
-  w: 2.95 * TILE,
-  h: 2.02 * TILE,
+  x: 15.0 * TILE,
+  y: 7.25 * TILE,
+  w: 3.35 * TILE,
+  h: 2.05 * TILE,
 };
 
 // Family Kitchen wooden dining table & tucked chairs footprint (positioned for open corridor to bathroom door)
@@ -107,54 +112,77 @@ export const KITCHEN_DINING_RECT: Rect = {
   h: 1.85 * TILE,
 };
 
-// Mina's own workstation swivel chair on the right side of the Home Office
+// Mina's own workstation swivel chair in the dedicated East AI Suite of the expanded Home Office
 export const MINA_POS = {
-  x: 16.82 * TILE,
-  y: 7.8 * TILE,
+  x: 20.72 * TILE,
+  y: 7.75 * TILE,
+};
+
+// Antigravity Localhost Coding Agent position & player interaction spot (south-west tech zone of Home Office)
+export const AGY_POS = {
+  x: 13.0 * TILE,
+  y: 10.6 * TILE,
+};
+export const AGY_STAND_POS = {
+  x: 13.95 * TILE,
+  y: 10.6 * TILE,
 };
 
 // Tight proximity thresholds around Mina's desk (must be inside radius to access Mina)
-export const MINA_APPROACH_RADIUS = 72;
-export const MINA_LEAVE_RADIUS = 84;
-export const MINA_MAX_ROAM_RADIUS = 46;
+export const MINA_APPROACH_RADIUS = 76;
+export const MINA_LEAVE_RADIUS = 88;
+export const MINA_MAX_ROAM_RADIUS = 50;
 export const MINA_GREET_STOP_DIST = 28;
 
-// Clear walkable route along the wide right office aisle to stand directly in front of drawPinboard
-export const MINA_AISLE_X = 16.65 * TILE;
-export const MINA_PINBOARD_SPOT = { x: 14.5 * TILE, y: 2.48 * TILE };
+// Clear walkable route to stand directly in front of the unobstructed north-west Office Pinboard
+export const MINA_AISLE_X = 19.65 * TILE;
+export const MINA_PINBOARD_SPOT = { x: 13.65 * TILE, y: 2.52 * TILE };
 
 export const MINA_TO_PINBOARD_WAYPOINTS = [
-  { x: MINA_AISLE_X, y: 5.25 * TILE },
-  { x: MINA_AISLE_X, y: 2.48 * TILE },
+  { x: MINA_AISLE_X, y: 5.55 * TILE },
+  { x: 14.5 * TILE, y: 5.55 * TILE },
   MINA_PINBOARD_SPOT,
 ];
 
 export const MINA_RETURN_DESK_WAYPOINTS = [
-  { x: MINA_AISLE_X, y: 2.48 * TILE },
-  { x: MINA_AISLE_X, y: 5.25 * TILE },
+  { x: 14.5 * TILE, y: 5.55 * TILE },
+  { x: MINA_AISLE_X, y: 5.55 * TILE },
   { x: MINA_POS.x, y: MINA_POS.y },
 ];
 
 // Static collision boxes in world coordinates
 export const COLLIDERS: Rect[] = [
-  // Outer walls
-  { x: 0, y: 0, w: WORLD_W, h: 2 * TILE }, // North wall (rows 0-1)
-  { x: 0, y: SOUTH_WALL_ROW * TILE, w: WORLD_W, h: TILE }, // South wall (row 22)
+  // Outer walls (asymmetric L-shaped / stepped East wing for +50% expanded Home Office)
+  { x: 0, y: 0, w: WORLD_W, h: 2 * TILE }, // North wall (rows 0-1, cols 0..23)
+  { x: 0, y: SOUTH_WALL_ROW * TILE, w: LOWER_WORLD_W, h: TILE }, // Lower wing South wall (row 22, cols 0..19)
   { x: 0, y: 0, w: TILE, h: WORLD_H }, // West wall (col 0)
-  { x: 19 * TILE, y: 0, w: TILE, h: WORLD_H }, // East wall (col 19)
+  { x: OFFICE_EAST_WALL_COL * TILE, y: 0, w: TILE, h: (MID_WALL_ROW + 1) * TILE }, // Expanded Office East wall (col 23, rows 0..12)
+  {
+    x: LOWER_EAST_WALL_COL * TILE,
+    y: MID_WALL_ROW * TILE,
+    w: TILE,
+    h: (SOUTH_WALL_ROW - MID_WALL_ROW + 1) * TILE,
+  }, // Bathroom East wall (col 19, rows 12..22)
+  {
+    x: (LOWER_EAST_WALL_COL + 1) * TILE,
+    y: (MID_WALL_ROW + 1) * TILE,
+    w: (MAP_COLS - LOWER_EAST_WALL_COL - 1) * TILE,
+    h: (MAP_ROWS - MID_WALL_ROW - 1) * TILE,
+  }, // Exterior non-walkable void outside Bathroom & below extended Office East wing (cols 20..23, rows 13..22)
 
   // Upper interior vertical dividing wall (col 10) with open doorway rows 6..8
   { x: DIVIDER_COL * TILE, y: 2 * TILE, w: TILE, h: 4 * TILE }, // rows 2..5
   { x: DIVIDER_COL * TILE, y: 9 * TILE, w: TILE, h: 3 * TILE }, // rows 9..11
 
-  // Horizontal dividing wall (rows 12..13): open ONLY at Living <-> Kitchen (cols 5..6); solid between Office & Bathroom
+  // Horizontal dividing wall (rows 12..13): open ONLY at Living <-> Kitchen (cols 5..6);
+  // solid between Office & Bathroom (cols 7..18) AND forms the South outer wall of the extended Office wing (cols 19..23)
   { x: 1 * TILE, y: MID_WALL_ROW * TILE, w: (KITCHEN_DOOR_COL_START - 1) * TILE, h: 2 * TILE }, // cols 1..4
   {
     x: (KITCHEN_DOOR_COL_END + 1) * TILE,
     y: MID_WALL_ROW * TILE,
-    w: (19 - KITCHEN_DOOR_COL_END - 1) * TILE,
+    w: (OFFICE_EAST_WALL_COL - KITCHEN_DOOR_COL_END - 1) * TILE,
     h: 2 * TILE,
-  }, // cols 7..18 (completely separates Home Office from Bathroom)
+  }, // cols 7..22 (separates Home Office from Bathroom & seals south edge of Office East extension)
 
   // Lower interior vertical dividing wall (col 10, rows 14..21) with Kitchen <-> Bathroom doorway at rows 16..17
   {
@@ -180,15 +208,19 @@ export const COLLIDERS: Rect[] = [
   { x: 1.2 * TILE, y: 10.2 * TILE, w: 0.9 * TILE, h: 1.0 * TILE }, // Bottom-left potted plant
   { x: 2.5 * TILE, y: 10.55 * TILE, w: 2.4 * TILE, h: 1.15 * TILE }, // Living room TV console
 
-  // Home Office furniture
-  { x: 11.15 * TILE, y: 2.1 * TILE, w: 0.85 * TILE, h: 0.95 * TILE }, // Office potted fern
-  { x: 12.25 * TILE, y: 3.1 * TILE, w: 4.0 * TILE, h: 1.55 * TILE }, // Player computer work desk
-  { ...CENTER_TABLE_RECT }, // Large central document & book work table (Google Drive)
-  { x: 17.85 * TILE, y: 2.15 * TILE, w: 1.05 * TILE, h: 2.3 * TILE }, // Top-right office bookcase
-  { x: 17.05 * TILE, y: 5.1 * TILE, w: 0.55 * TILE, h: 0.55 * TILE }, // Office wastebasket beside printer
-  { x: 17.65 * TILE, y: 4.95 * TILE, w: 1.25 * TILE, h: 1.1 * TILE }, // Office printer & scanner stand
-  { x: 17.35 * TILE, y: 6.2 * TILE, w: 1.55 * TILE, h: 3.2 * TILE }, // Mina's AI workstation desk
-  { x: 17.55 * TILE, y: 9.55 * TILE, w: 1.35 * TILE, h: 1.4 * TILE }, // Rolling filing cabinet & binders
+  // Expanded & Reorganized Home Office furniture (cols 11..22, rows 2..11)
+  { x: 11.18 * TILE, y: 2.08 * TILE, w: 0.85 * TILE, h: 0.95 * TILE }, // North-west office potted fern
+  { x: 11.15 * TILE, y: 3.45 * TILE, w: 0.95 * TILE, h: 1.85 * TILE }, // West-wall walnut refreshment & reference credenza
+  { x: 15.65 * TILE, y: 2.95 * TILE, w: 4.1 * TILE, h: 1.55 * TILE }, // Player executive computer work desk (north-center)
+  { ...CENTER_TABLE_RECT }, // Large central document & book work table (Google Drive island)
+  { x: 20.55 * TILE, y: 2.08 * TILE, w: 1.0 * TILE, h: 2.15 * TILE }, // North-east reference library bookcase (left)
+  { x: 21.75 * TILE, y: 2.08 * TILE, w: 1.05 * TILE, h: 2.15 * TILE }, // North-east reference library bookcase (right)
+  { x: 20.92 * TILE, y: 4.95 * TILE, w: 0.55 * TILE, h: 0.55 * TILE }, // Office wastebasket beside printer
+  { x: 21.55 * TILE, y: 4.8 * TILE, w: 1.3 * TILE, h: 1.1 * TILE }, // Office multifunction printer & scanner stand
+  { x: 21.25 * TILE, y: 6.15 * TILE, w: 1.6 * TILE, h: 3.25 * TILE }, // Mina's AI workstation desk (East wing)
+  { x: 21.45 * TILE, y: 9.55 * TILE, w: 1.4 * TILE, h: 1.4 * TILE }, // Rolling filing cabinet & binders
+  { x: 19.35 * TILE, y: 10.75 * TILE, w: 0.85 * TILE, h: 0.95 * TILE }, // South-east office potted monstera plant
+  { x: 11.15 * TILE, y: 9.75 * TILE, w: 1.48 * TILE, h: 1.8 * TILE }, // Antigravity localhost terminal desk (south-west tech zone)
 
   // Lower-Left Room: Family Kitchen & Dining furniture
   { x: 1.12 * TILE, y: 13.75 * TILE, w: 1.38 * TILE, h: 1.45 * TILE }, // Double-door refrigerator
@@ -289,10 +321,10 @@ export const INTERACTABLES: InteractableObject[] = [
     zone: 'office',
     label: 'กระดานโน้ตห้องทำงาน',
     actionLabel: 'เปิด Google Tasks',
-    x: 13.1 * TILE,
-    y: 16,
-    w: 2.8 * TILE,
-    h: 28,
+    x: 12.15 * TILE,
+    y: 15,
+    w: 3.0 * TILE,
+    h: 29,
     interactRadius: 88,
   },
   {
@@ -300,11 +332,11 @@ export const INTERACTABLES: InteractableObject[] = [
     zone: 'office',
     label: 'โต๊ะทำงานส่วนตัว',
     actionLabel: 'นั่งหน้าคอมพิวเตอร์',
-    x: 12.25 * TILE,
-    y: 3.1 * TILE,
-    w: 4.0 * TILE,
+    x: 15.65 * TILE,
+    y: 2.95 * TILE,
+    w: 4.1 * TILE,
     h: 2.35 * TILE,
-    interactRadius: 72,
+    interactRadius: 74,
   },
   {
     id: 'drive_table',
@@ -315,18 +347,29 @@ export const INTERACTABLES: InteractableObject[] = [
     y: CENTER_TABLE_RECT.y,
     w: CENTER_TABLE_RECT.w,
     h: CENTER_TABLE_RECT.h,
-    interactRadius: 74,
+    interactRadius: 76,
   },
   {
     id: 'mina_desk',
     zone: 'office',
     label: 'มีน่า (ผู้ช่วย AI)',
     actionLabel: 'คุยงานกับมีน่า',
-    x: 16.3 * TILE,
-    y: 6.2 * TILE,
-    w: 2.6 * TILE,
-    h: 3.2 * TILE,
-    interactRadius: 72,
+    x: 20.2 * TILE,
+    y: 6.15 * TILE,
+    w: 2.65 * TILE,
+    h: 3.25 * TILE,
+    interactRadius: 76,
+  },
+  {
+    id: 'antigravity_desk',
+    zone: 'office',
+    label: 'Antigravity (Localhost Agent)',
+    actionLabel: 'เปิดคอนโซล Antigravity',
+    x: 11.15 * TILE,
+    y: 9.65 * TILE,
+    w: 2.35 * TILE,
+    h: 1.95 * TILE,
+    interactRadius: 76,
   },
 ];
 

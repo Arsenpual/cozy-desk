@@ -2,6 +2,9 @@ import type { Rect } from '../types/game';
 import {
   COLLIDERS,
   collidesWithWorld,
+  LOWER_EAST_WALL_COL,
+  MID_WALL_ROW,
+  OFFICE_EAST_WALL_COL,
   rectsOverlap,
   SOUTH_WALL_ROW,
   TILE,
@@ -467,9 +470,12 @@ export function findMeetingPathForMina(
       const tx = playerX + Math.cos(angle) * radius;
       const ty = playerY + Math.sin(angle) * radius;
 
+      const maxEastX =
+        (ty < MID_WALL_ROW * TILE ? OFFICE_EAST_WALL_COL - 0.25 : LOWER_EAST_WALL_COL - 0.25) *
+        TILE;
       if (
         tx < 1.25 * TILE ||
-        tx > 18.75 * TILE ||
+        tx > maxEastX ||
         ty < 2.25 * TILE ||
         ty > (SOUTH_WALL_ROW - 0.35) * TILE
       ) {

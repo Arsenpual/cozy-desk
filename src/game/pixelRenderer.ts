@@ -8,6 +8,7 @@ import type {
   TimeOfDay,
 } from '../types/game';
 import {
+  AGY_POS,
   CAMERA_BASE_SCALE,
   CENTER_TABLE_RECT,
   DIVIDER_COL,
@@ -15,9 +16,12 @@ import {
   DOOR_ROW_START,
   getRoomZone,
   KITCHEN_DINING_RECT,
+  LOWER_EAST_WALL_COL,
+  LOWER_WORLD_W,
   MID_WALL_ROW,
   MINA_APPROACH_RADIUS,
   MINA_POS,
+  OFFICE_EAST_WALL_COL,
   SOUTH_WALL_ROW,
   TILE,
   VIEW_H,
@@ -49,6 +53,7 @@ export interface RenderContextState {
   isWorking: boolean;
   isTvOn: boolean;
   isDriveOpen: boolean;
+  isAntigravityOpen?: boolean;
   camera: CameraTransform;
   inspectHover?: InspectHoverRenderState | null;
   viewW?: number;
@@ -69,9 +74,9 @@ function pxRect(
 }
 
 function drawWoodFloor(ctx: CanvasRenderingContext2D) {
-  // Living lounge oak floorboards (cols 1..9, rows 2..11)
+  // Living lounge oak floorboards (cols 1..9) & +50% expanded Home Office floorboards (cols 11..22, rows 2..11)
   for (let row = 2; row <= 11; row++) {
-    for (let col = 1; col <= 18; col++) {
+    for (let col = 1; col < OFFICE_EAST_WALL_COL; col++) {
       if (col === DIVIDER_COL && (row < DOOR_ROW_START || row > DOOR_ROW_END)) {
         continue;
       }
@@ -112,30 +117,53 @@ function drawWalls(
   extraPinCount: number,
   isPinboardActive: boolean
 ) {
-  // Outer dark timber border shell
-  pxRect(ctx, 0, 0, WORLD_W, 10, '#3B281E');
-  pxRect(ctx, 0, SOUTH_WALL_ROW * TILE, WORLD_W, TILE, '#3B281E');
-  pxRect(ctx, 0, 0, TILE, WORLD_H, '#3B281E');
-  pxRect(ctx, 19 * TILE, 0, TILE, WORLD_H, '#3B281E');
+  const officeEastX = OFFICE_EAST_WALL_COL * TILE;
+  const lowerEastX = LOWER_EAST_WALL_COL * TILE;
+  const midY = MID_WALL_ROW * TILE;
 
-  // Inner wood trim on side walls
-  pxRect(ctx, TILE - 5, 10, 5, WORLD_H - TILE - 10, '#5B3E2B');
-  pxRect(ctx, 19 * TILE, 10, 5, WORLD_H - TILE - 10, '#5B3E2B');
+  // Outer dark timber border shell (asymmetric L-shaped East wing for +50% expanded Home Office)
+  pxRect(ctx, 0, 0, WORLD_W, 10, '#3B281E'); // Full North outer border (cols 0..23)
+  pxRect(ctx, 0, SOUTH_WALL_ROW * TILE, LOWER_WORLD_W, TILE, '#3B281E'); // Lower wing South wall (cols 0..19)
+  pxRect(ctx, 0, 0, TILE, WORLD_H, '#3B281E'); // West outer wall (col 0)
+  pxRect(ctx, officeEastX, 0, TILE, (MID_WALL_ROW + 1) * TILE, '#3B281E'); // Expanded Office East wall (col 23, rows 0..12)
+  pxRect(
+    ctx,
+    lowerEastX,
+    midY,
+    (OFFICE_EAST_WALL_COL - LOWER_EAST_WALL_COL + 1) * TILE,
+    TILE,
+    '#3B281E'
+  ); // South outer wall of extended Office East wing (cols 19..23, row 12)
+  pxRect(ctx, lowerEastX, midY, TILE, WORLD_H - midY, '#3B281E'); // Lower wing (Bathroom) East wall (col 19, rows 12..22)
 
-  // North interior walls (Living: warm cream, Office: soft warm sand)
+  // Inner wood trim on side & overhang walls
+  pxRect(ctx, TILE - 5, 10, 5, WORLD_H - TILE - 10, '#5B3E2B'); // West inner trim
+  pxRect(ctx, officeEastX, 10, 5, midY - 10, '#5B3E2B'); // Expanded Office East inner trim
+  pxRect(
+    ctx,
+    lowerEastX,
+    midY,
+    (OFFICE_EAST_WALL_COL - LOWER_EAST_WALL_COL) * TILE + 5,
+    6,
+    '#5B3E2B'
+  ); // Expanded Office East overhang south baseboard trim
+  pxRect(ctx, lowerEastX, midY, 5, SOUTH_WALL_ROW * TILE - midY, '#5B3E2B'); // Bathroom East inner trim
+
+  // North interior walls (Living: warm cream 9 cols, Expanded Office: soft warm sand 12 cols)
   pxRect(ctx, TILE, 10, 9 * TILE, 2 * TILE - 10, '#E9DFCE');
-  pxRect(ctx, 11 * TILE, 10, 8 * TILE, 2 * TILE - 10, '#E3D7C4');
+  pxRect(ctx, 11 * TILE, 10, 12 * TILE, 2 * TILE - 10, '#E3D7C4');
 
   // Subtle wallpaper vertical stripes
-  for (let x = TILE + 8; x < 19 * TILE; x += 16) {
+  for (let x = TILE + 8; x < officeEastX; x += 16) {
     if (x >= DIVIDER_COL * TILE && x < (DIVIDER_COL + 1) * TILE) continue;
     pxRect(ctx, x, 10, 2, 2 * TILE - 22, 'rgba(130, 102, 74, 0.08)');
   }
 
   // Wooden wainscoting / baseboard along north wall
-  pxRect(ctx, TILE, 2 * TILE - 14, 18 * TILE, 14, '#7A5438');
-  pxRect(ctx, TILE, 2 * TILE - 14, 18 * TILE, 2, '#9A6E4D');
-  pxRect(ctx, TILE, 2 * TILE - 2, 18 * TILE, 2, '#4A3121');
+  const northInteriorW = (OFFICE_EAST_WALL_COL - 1) * TILE;
+  pxRect(ctx, TILE, 2 * TILE - 14, northInteriorW, 14, '#7A5438');
+  pxRect(ctx, TILE, 2 * TILE - 14, northInteriorW, 2, '#9A6E4D');
+  pxRect(ctx, TILE, 2 * TILE - 2, northInteriorW, 2, '#4A3121');
 
   // Upper dividing partition wall (col 10)
   const dx = DIVIDER_COL * TILE;
@@ -149,9 +177,19 @@ function drawWalls(
   pxRect(ctx, dx, lowerY, TILE, upperLowerH, '#4B3224');
   pxRect(ctx, dx + 3, lowerY + 4, TILE - 6, upperLowerH - 4, '#6E4A33');
 
-  // Room label plaques on north wall (subtle painted wood)
+  // Windows across the North Wall: Living room window + two balanced Home Office windows
   drawWindow(ctx, 2.2 * TILE, 14, 2.8 * TILE, 36, timeOfDay, tick);
-  drawWindow(ctx, 16.8 * TILE, 14, 1.8 * TILE, 34, timeOfDay, tick);
+  drawWindow(ctx, 16.45 * TILE, 14, 2.5 * TILE, 34, timeOfDay, tick); // Executive desk picture window
+  drawWindow(ctx, 20.1 * TILE, 14, 1.85 * TILE, 34, timeOfDay, tick); // East wing library window
+
+  // Framed architectural chart plaque on office north wall between pinboard & executive window
+  const apx = Math.round(15.42 * TILE);
+  pxRect(ctx, apx, 17, 24, 22, '#593A25');
+  pxRect(ctx, apx + 2, 19, 20, 18, '#FAF6F0');
+  pxRect(ctx, apx + 4, 21, 16, 4, '#3B5B7C');
+  pxRect(ctx, apx + 4, 27, 9, 7, '#6F9486');
+  pxRect(ctx, apx + 15, 27, 5, 3, '#E2A84B');
+  pxRect(ctx, apx + 15, 31, 5, 3, '#C85A3F');
 
   // Festive Christmas fairy light garland along the living room top wall
   drawChristmasWallGarland(ctx, TILE + 4, 11, 8.8 * TILE, tick);
@@ -174,8 +212,8 @@ function drawWalls(
   // Cozy fireplace in living room (cols 7..8.8)
   drawFireplace(ctx, 7.0 * TILE, 16, tick);
 
-  // Cork pinboard in office (cols 13..15.5)
-  drawPinboard(ctx, 13.1 * TILE, 16, 2.8 * TILE, 28, extraPinCount, isPinboardActive, tick);
+  // Unobstructed Cork Pinboard in North-West Planning Zone of expanded Home Office (cols 12.15..15.15)
+  drawPinboard(ctx, 12.15 * TILE, 15, 3.0 * TILE, 29, extraPinCount, isPinboardActive, tick);
 }
 
 function drawPendulumClock(
@@ -480,23 +518,41 @@ function drawRugs(ctx: CanvasRenderingContext2D) {
   pxRect(ctx, lx + 17, ly + 17, lw - 34, lh - 34, '#B91C1C');
   pxRect(ctx, lx + 23, ly + 23, lw - 46, lh - 46, '#EDE2D0');
 
-  // Home office calm sage rug (player area)
-  const ox = 11.9 * TILE;
-  const oy = 4.5 * TILE;
-  const ow = 4.35 * TILE;
-  const oh = 4.6 * TILE;
+  // North-West Office Planning Bay woven runner mat in front of Cork Pinboard
+  const px = 12.25 * TILE;
+  const py = 2.15 * TILE;
+  const pw = 2.8 * TILE;
+  const ph = 1.15 * TILE;
+  pxRect(ctx, px, py, pw, ph, '#8B684A');
+  pxRect(ctx, px + 3, py + 3, pw - 6, ph - 6, '#B89472');
+  pxRect(ctx, px + 6, py + 6, pw - 12, ph - 12, '#D8C2A8');
+
+  // Expanded Home Office Executive Calm Sage Rug (under Player's Desk & Central Drive Island)
+  const ox = 14.75 * TILE;
+  const oy = 4.35 * TILE;
+  const ow = 5.15 * TILE;
+  const oh = 5.25 * TILE;
   pxRect(ctx, ox, oy, ow, oh, '#5A7D70');
   pxRect(ctx, ox + 4, oy + 4, ow - 8, oh - 8, '#6F9486');
   pxRect(ctx, ox + 10, oy + 10, ow - 20, oh - 20, '#5E8275');
 
-  // Mina's warm workstation floor mat on the right side of the office
-  const mx = 15.95 * TILE;
-  const my = 6.45 * TILE;
-  const mw = 1.45 * TILE;
-  const mh = 2.75 * TILE;
+  // Mina's warm workstation floor mat in the dedicated East AI Suite
+  const mx = 19.8 * TILE;
+  const my = 6.4 * TILE;
+  const mw = 1.5 * TILE;
+  const mh = 2.8 * TILE;
   pxRect(ctx, mx, my, mw, mh, '#8C6B4E');
   pxRect(ctx, mx + 3, my + 3, mw - 6, mh - 6, '#A98562');
   pxRect(ctx, mx + 6, my + 6, mw - 12, mh - 12, '#9A7756');
+
+  // Antigravity's sleek slate-indigo developer floor mat in the South-West Tech Zone
+  const ax = 11.15 * TILE;
+  const ay = 9.65 * TILE;
+  const aw = 2.45 * TILE;
+  const ah = 1.9 * TILE;
+  pxRect(ctx, ax, ay, aw, ah, '#2D3548');
+  pxRect(ctx, ax + 3, ay + 3, aw - 6, ah - 6, '#3B465E');
+  pxRect(ctx, ax + 6, ay + 6, aw - 12, ah - 12, '#323C52');
 }
 
 function drawMinaProximityZone(
@@ -515,9 +571,14 @@ function drawMinaProximityZone(
   const fillAlpha = isInside ? 0.08 : 0.03;
 
   ctx.save();
-  // Clip to the interior office floor so the ring stays cleanly inside walls & furniture edges
+  // Clip to the expanded 12-column interior office floor so the ring stays cleanly inside walls & furniture edges
   ctx.beginPath();
-  ctx.rect((DIVIDER_COL + 1.05) * TILE, 2.1 * TILE, 6.25 * TILE, 9.7 * TILE);
+  ctx.rect(
+    (DIVIDER_COL + 1.05) * TILE,
+    2.1 * TILE,
+    (OFFICE_EAST_WALL_COL - DIVIDER_COL - 1.15) * TILE,
+    9.75 * TILE
+  );
   ctx.clip();
 
   ctx.beginPath();
@@ -792,22 +853,46 @@ function drawOfficeFurniture(
   tick: number,
   isPlayerAtOwnDesk: boolean
 ) {
-  // Office potted fern & top-right bookcase
-  drawPottedPlant(ctx, 11.15 * TILE, 2.1 * TILE, 'fern');
-  drawBookshelf(ctx, 17.85 * TILE, 2.15 * TILE, 72);
+  // 1. North-West Office Potted Fern & North-East Double Reference Bookcase Library
+  drawPottedPlant(ctx, 11.18 * TILE, 2.08 * TILE, 'fern');
+  drawBookshelf(ctx, 20.55 * TILE, 2.08 * TILE, 68);
+  drawBookshelf(ctx, 21.75 * TILE, 2.08 * TILE, 68);
+  // Decorative brass globe & reference archive box atop the double library bookcases
+  pxRect(ctx, 20.55 * TILE + 8, 2.08 * TILE - 6, 12, 6, '#D4A359');
+  pxRect(ctx, 21.75 * TILE + 10, 2.08 * TILE - 7, 8, 7, '#4D7C6F');
 
-  // Player ergonomic swivel chair tucked closely in front of desk and centered directly on the monitor
+  // 2. West-Wall Walnut Refreshment & Reference Credenza (cols 11.15..12.1, rows 3.45..5.3)
+  const crX = Math.round(11.15 * TILE);
+  const crY = Math.round(3.45 * TILE);
+  const crW = Math.round(0.95 * TILE); // ~30px
+  const crH = Math.round(1.85 * TILE); // ~59px
+  pxRect(ctx, crX + 2, crY + crH - 1, crW - 3, 5, 'rgba(28,20,15,0.25)');
+  pxRect(ctx, crX, crY, crW, crH, '#563621');
+  pxRect(ctx, crX + 2, crY + 2, crW - 5, crH - 6, '#875937');
+  pxRect(ctx, crX + crW - 4, crY + 2, 2, crH - 6, '#A6724A');
+  // Compact office espresso brewer & glass carafe on top of credenza
+  pxRect(ctx, crX + 5, crY + 6, 14, 15, '#2B2826');
+  pxRect(ctx, crX + 7, crY + 8, 10, 5, '#4A4542');
+  pxRect(ctx, crX + 9, crY + 14, 6, 5, '#7C4A2D'); // Coffee pot
+  pxRect(ctx, crX + 16, crY + 9, 2, 2, '#4ADE80'); // Ready indicator LED
+  // Ceramic mugs & reference binders on lower part of credenza
+  pxRect(ctx, crX + 7, crY + 26, 6, 6, '#FAF6F0');
+  pxRect(ctx, crX + 15, crY + 28, 6, 6, '#E2A84B');
+  pxRect(ctx, crX + 6, crY + 39, 16, 12, '#3B5B7C');
+  pxRect(ctx, crX + 8, crY + 42, 12, 6, '#C85A3F');
+
+  // 3. Player Ergonomic Swivel Chair (tucked closely in front of executive desk, centered on monitor)
   const chX = Math.round(WORK_SEAT_POS.x) - 14;
-  const chY = 149;
+  const chY = Math.round(WORK_SEAT_POS.y) - 14;
   pxRect(ctx, chX + 4, chY + 18, 20, 5, 'rgba(28,20,15,0.24)');
   pxRect(ctx, chX + 6, chY + 13, 16, 8, '#4A3F38');
   pxRect(ctx, chX + 5, chY + 3, 18, 12, '#7D5A44');
   pxRect(ctx, chX + 7, chY + 5, 14, 8, '#9A7259');
 
-  // Player Wide Oak Work Desk (x: 12.25*32, y: 3.1*32, w: 4.0*32, h: 1.55*32)
-  const dx = 12.25 * TILE;
-  const dy = 3.1 * TILE;
-  const dw = 4.0 * TILE;
+  // 4. Player Wide Oak Executive Work Desk (north-center bay: x: 15.65*32, y: 2.95*32, w: 4.1*32, h: 1.55*32)
+  const dx = 15.65 * TILE;
+  const dy = 2.95 * TILE;
+  const dw = 4.1 * TILE;
   const dh = 1.55 * TILE;
   pxRect(ctx, dx + 2, dy + dh, dw - 4, 6, 'rgba(28,20,15,0.28)');
   pxRect(ctx, dx, dy, dw, dh, '#5C3A22');
@@ -823,7 +908,7 @@ function drawOfficeFurniture(
   pxRect(ctx, dx + 7, dy + 5, 16, 10, '#F5B841');
   pxRect(ctx, dx + 9, dy + 7, 12, 6, '#FFF1B8');
 
-  // Player Personal Computer Monitor (center-left of desk)
+  // Player Personal Computer Monitor (centered on WORK_SEAT_POS.x)
   const mx = dx + 42;
   const my = dy + 4;
   pxRect(ctx, mx + 12, my + 22, 14, 5, '#3E3A37');
@@ -844,19 +929,19 @@ function drawOfficeFurniture(
   pxRect(ctx, mx + 33, dy + 32, 6, 7, '#D6CEC4');
 
   // Notepad & pen on right side of player desk
-  pxRect(ctx, dx + 91, dy + 16, 18, 14, '#FAF6F0');
-  pxRect(ctx, dx + 94, dy + 19, 12, 2, '#94A3B8');
-  pxRect(ctx, dx + 94, dy + 23, 9, 2, '#94A3B8');
-  pxRect(ctx, dx + 112, dy + 18, 3, 12, '#D97736');
+  pxRect(ctx, dx + 93, dy + 16, 18, 14, '#FAF6F0');
+  pxRect(ctx, dx + 96, dy + 19, 12, 2, '#94A3B8');
+  pxRect(ctx, dx + 96, dy + 23, 9, 2, '#94A3B8');
+  pxRect(ctx, dx + 114, dy + 18, 3, 12, '#D97736');
 
   // =========================================================================
-  // MINA'S RIGHT-SIDE AI ASSISTANT WORKSTATION & FULL OFFICE EQUIPMENT
+  // MINA'S EAST-WING AI ASSISTANT SUITE & FULL OFFICE EQUIPMENT
   // =========================================================================
 
   // 1. Office Multifunction Printer & Scanner Stand (north side of Mina's desk)
-  const px = 17.65 * TILE;
-  const py = 4.95 * TILE;
-  const pw = 1.25 * TILE;
+  const px = 21.55 * TILE;
+  const py = 4.8 * TILE;
+  const pw = 1.3 * TILE;
   const ph = 1.1 * TILE;
   pxRect(ctx, px + 2, py + ph - 1, pw - 4, 5, 'rgba(28,20,15,0.25)');
   // Wooden printer cart
@@ -889,11 +974,11 @@ function drawOfficeFurniture(
   pxRect(ctx, mcX - 11, mcY - 7, 5, 16, '#2E4C43');
   pxRect(ctx, mcX - 10, mcY - 5, 3, 12, '#5C8F80');
 
-  // 3. Mina's Dedicated Oak & Walnut AI Workstation Desk (right wall, vertical orientation)
-  const mdx = 17.35 * TILE;
-  const mdy = 6.2 * TILE;
-  const mdw = 1.55 * TILE;
-  const mdh = 3.2 * TILE;
+  // 3. Mina's Dedicated Oak & Walnut AI Workstation Desk (East wall, vertical orientation)
+  const mdx = 21.25 * TILE;
+  const mdy = 6.15 * TILE;
+  const mdw = 1.6 * TILE;
+  const mdh = 3.25 * TILE;
   pxRect(ctx, mdx + 2, mdy + mdh, mdw - 3, 6, 'rgba(28,20,15,0.28)');
   // Desk frame & walnut top
   pxRect(ctx, mdx, mdy, mdw, mdh, '#563621');
@@ -917,13 +1002,13 @@ function drawOfficeFurniture(
   pxRect(ctx, mdx + 7, mdy + 21, 7, 1, '#B45309');
 
   // Secondary Tablet / Reference Screen (upper-right, angled beside monitor)
-  pxRect(ctx, mdx + 25, mdy + 19, 16, 12, '#2B2826');
-  pxRect(ctx, mdx + 27, mdy + 21, 12, 8, '#1E3A4C');
-  pxRect(ctx, mdx + 29, mdy + 23, 8, 2, '#93C5FD');
-  pxRect(ctx, mdx + 29, mdy + 26, 6, 2, '#86EFAC');
+  pxRect(ctx, mdx + 26, mdy + 19, 16, 12, '#2B2826');
+  pxRect(ctx, mdx + 28, mdy + 21, 12, 8, '#1E3A4C');
+  pxRect(ctx, mdx + 30, mdy + 23, 8, 2, '#93C5FD');
+  pxRect(ctx, mdx + 30, mdy + 26, 6, 2, '#86EFAC');
 
   // Main Widescreen Computer Monitor (center-right of Mina's desk, facing left toward Mina)
-  const monX = mdx + 27;
+  const monX = mdx + 28;
   const monY = mdy + 35;
   pxRect(ctx, monX + 9, monY + 11, 7, 12, '#3C3733'); // Monitor stand arm
   pxRect(ctx, monX, monY, 13, 34, '#24211F'); // Monitor bezel
@@ -946,11 +1031,11 @@ function drawOfficeFurniture(
   pxRect(ctx, mdx + 9, mdy + 62, 6, 5, '#E7E0D5'); // Wireless mouse
 
   // Document Inbox Paper Tray & Warm Ceramic Mug (lower part of Mina's desk)
-  pxRect(ctx, mdx + 21, mdy + 74, 22, 18, '#5C3C24'); // Wooden inbox tray
-  pxRect(ctx, mdx + 23, mdy + 76, 18, 13, '#FAF6F0'); // Stacked docs
-  pxRect(ctx, mdx + 25, mdy + 79, 13, 1, '#94A3B8');
-  pxRect(ctx, mdx + 25, mdy + 82, 11, 1, '#94A3B8');
-  pxRect(ctx, mdx + 25, mdy + 85, 9, 1, '#D97736');
+  pxRect(ctx, mdx + 22, mdy + 74, 22, 18, '#5C3C24'); // Wooden inbox tray
+  pxRect(ctx, mdx + 24, mdy + 76, 18, 13, '#FAF6F0'); // Stacked docs
+  pxRect(ctx, mdx + 26, mdy + 79, 13, 1, '#94A3B8');
+  pxRect(ctx, mdx + 26, mdy + 82, 11, 1, '#94A3B8');
+  pxRect(ctx, mdx + 26, mdy + 85, 9, 1, '#D97736');
   // Mina's ceramic teacup with gentle steam
   pxRect(ctx, mdx + 8, mdy + 78, 8, 8, '#FAF6F0');
   pxRect(ctx, mdx + 10, mdy + 80, 4, 4, '#7C4A2D');
@@ -958,9 +1043,9 @@ function drawOfficeFurniture(
   pxRect(ctx, mdx + 11, mdy + 74 - cupSteam, 2, 2, 'rgba(255,250,240,0.55)');
 
   // 4. Rolling 3-Drawer Wooden Filing Cabinet + Office Binders (south side of Mina's desk)
-  const fcx = 17.55 * TILE;
+  const fcx = 21.45 * TILE;
   const fcy = 9.55 * TILE;
-  const fcw = 1.35 * TILE;
+  const fcw = 1.4 * TILE;
   const fch = 1.4 * TILE;
   pxRect(ctx, fcx + 2, fcy + fch - 1, fcw - 4, 5, 'rgba(28,20,15,0.26)');
   pxRect(ctx, fcx, fcy, fcw, fch, '#5B3A24');
@@ -982,13 +1067,75 @@ function drawOfficeFurniture(
   pxRect(ctx, fcx + 32, fcy + 3, 5, 4, '#5E9C74');
 
   // 5. Small Office Wastebasket tucked neatly beside the printer stand
-  const bx = 17.05 * TILE;
-  const by = 5.1 * TILE;
+  const bx = 20.92 * TILE;
+  const by = 4.95 * TILE;
   pxRect(ctx, bx + 1, by + 14, 15, 4, 'rgba(28,20,15,0.22)');
   pxRect(ctx, bx + 1, by + 1, 15, 15, '#5C534C');
   pxRect(ctx, bx + 3, by + 3, 11, 11, '#3D3732');
   pxRect(ctx, bx + 5, by + 5, 4, 4, '#FAF6F0'); // Crumpled paper
   pxRect(ctx, bx + 9, by + 8, 3, 3, '#E8DFD3');
+
+  // 5b. South-East Office Potted Monstera Plant (balancing the expanded East Wing south wall)
+  drawPottedPlant(ctx, 19.35 * TILE, 10.75 * TILE, 'monstera');
+
+  // =========================================================================
+  // 6. ANTIGRAVITY LOCALHOST DEV STATION (south-west tech corner of Home Office)
+  // =========================================================================
+  const agx = Math.round(11.15 * TILE);
+  const agy = Math.round(9.75 * TILE);
+  const agw = Math.round(1.48 * TILE); // ~47
+  const agh = Math.round(1.8 * TILE); // ~58
+
+  // Swivel cyber-indigo developer chair at AGY_POS (facing left toward dual monitors)
+  const acX = Math.round(AGY_POS.x);
+  const acY = Math.round(AGY_POS.y);
+  pxRect(ctx, acX - 10, acY + 8, 20, 6, 'rgba(28,20,15,0.26)');
+  pxRect(ctx, acX - 7, acY + 7, 14, 3, '#2D3039');
+  pxRect(ctx, acX - 2, acY + 5, 4, 6, '#1F2229');
+  pxRect(ctx, acX - 8, acY - 3, 16, 11, '#313B5E');
+  pxRect(ctx, acX - 6, acY - 1, 12, 7, '#435282');
+  // Backrest on the RIGHT side (Antigravity faces left toward his localhost terminal desk)
+  pxRect(ctx, acX + 6, acY - 7, 5, 16, '#232B47');
+  pxRect(ctx, acX + 7, acY - 5, 3, 12, '#566BA8');
+
+  // Dark slate & walnut developer terminal desk
+  pxRect(ctx, agx + 2, agy + agh, agw - 4, 5, 'rgba(28,20,15,0.28)');
+  pxRect(ctx, agx, agy, agw, agh, '#252936');
+  pxRect(ctx, agx + 3, agy + 3, agw - 6, agh - 7, '#343A4D');
+  pxRect(ctx, agx + agw - 5, agy + 3, 2, agh - 7, '#4D5775'); // Right edge highlight
+
+  // Mini Localhost Server Tower on top-left corner with blinking activity LEDs
+  pxRect(ctx, agx + 5, agy + 5, 14, 14, '#181B24');
+  pxRect(ctx, agx + 7, agy + 7, 10, 2, '#38BDF8');
+  const srvBlink = Math.floor(tick / 12) % 2 === 0;
+  pxRect(ctx, agx + 7, agy + 11, 3, 2, srvBlink ? '#34D399' : '#10B981');
+  pxRect(ctx, agx + 12, agy + 11, 3, 2, !srvBlink ? '#A78BFA' : '#6366F1');
+  pxRect(ctx, agx + 7, agy + 15, 8, 1, '#475569');
+
+  // Vertical Dual-Screen Dark Mode Terminal Monitor (facing right toward Antigravity)
+  const tmx = agx + 6;
+  const tmy = agy + 22;
+  pxRect(ctx, tmx - 2, tmy + 9, 4, 10, '#1E222D'); // Stand arm
+  pxRect(ctx, tmx, tmy, 12, 27, '#141720'); // Monitor bezel
+  pxRect(ctx, tmx + 2, tmy + 2, 8, 23, '#0F172A'); // Terminal screen
+  const agPulse = Math.floor(tick / 7) % 4;
+  pxRect(ctx, tmx + 3, tmy + 4, 5, 2, '#38BDF8'); // Cyan code line
+  pxRect(ctx, tmx + 3, tmy + 8, 4 + (agPulse % 2), 2, '#A78BFA'); // Violet code line
+  pxRect(ctx, tmx + 3, tmy + 12, 6, 2, '#34D399'); // Emerald localhost status line
+  pxRect(ctx, tmx + 3, tmy + 16, 3 + (agPulse > 1 ? 2 : 0), 2, '#F472B6');
+  pxRect(ctx, tmx + 3, tmy + 20, 5, 2, '#7DD3FC');
+  // Subtle cyan monitor glow onto desk surface
+  pxRect(ctx, tmx + 12, tmy + 2, 4, 23, 'rgba(56, 189, 248, 0.16)');
+
+  // Dark Desk Mat + Compact RGB Mechanical Keyboard & Mouse (right side of desk)
+  pxRect(ctx, agx + 23, agy + 20, 18, 29, '#1E2433');
+  pxRect(ctx, agx + 26, agy + 24, 9, 17, '#12151E');
+  pxRect(ctx, agx + 28, agy + 26, 5, 13, '#CBD5E1');
+  pxRect(ctx, agx + 27, agy + 43, 6, 4, '#94A3B8');
+
+  // Energy Drink / Dark Espresso Tumbler on top-right corner
+  pxRect(ctx, agx + 28, agy + 7, 8, 9, '#1E293B');
+  pxRect(ctx, agx + 29, agy + 6, 6, 2, '#38BDF8');
 }
 
 function drawCenterDriveTable(
@@ -1250,6 +1397,128 @@ function drawMinaBubbleOverlay(
         : '#4D7C6F';
     drawSpeechBubble(ctx, x, y - 34, bubbleText, '#FAF6F0', border);
   }
+}
+
+function drawAntigravityNpc(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  tick: number,
+  isAntigravityOpen: boolean
+) {
+  const x = Math.round(AGY_POS.x);
+  const y = Math.round(AGY_POS.y);
+  const distToPlayer = Math.hypot(player.x - AGY_POS.x, player.y - AGY_POS.y);
+  const isEngaged = isAntigravityOpen || distToPlayer <= 78;
+  const breathe = Math.sin(tick * 0.09) > 0.3 ? 1 : 0;
+  const blink = tick % 175 > 168;
+
+  // Floor shadow & legs when turned to greet player
+  if (isEngaged) {
+    pxRect(ctx, x - 9, y + 7, 18, 5, 'rgba(20, 24, 36, 0.28)');
+    pxRect(ctx, x - 6, y + 2, 5, 7, '#1E2436');
+    pxRect(ctx, x + 1, y + 2, 5, 7, '#1E2436');
+  }
+
+  // Torso: Sleek Antigravity dark-indigo tech hoodie with cyan chest core accent
+  pxRect(ctx, x - 8, y - 8 + breathe, 16, 13, '#252F4C');
+  pxRect(ctx, x - 6, y - 7 + breathe, 12, 11, '#313E63');
+  const coreColor = Math.floor(tick / 15) % 2 === 0 ? '#38BDF8' : '#818CF8';
+  const emblemShift = isEngaged ? 0 : -2;
+  pxRect(ctx, x - 2 + emblemShift, y - 4 + breathe, 4, 3, coreColor);
+
+  // Arms: typing left at terminal when idle, or friendly wave/gesture when player approaches
+  if (!isEngaged) {
+    const typeShift = Math.floor(tick / 5) % 2;
+    pxRect(ctx, x + 6, y - 5 + breathe, 3, 8, '#252F4C');
+    pxRect(ctx, x - 17, y - 6 + typeShift, 11, 4, '#313E63');
+    pxRect(ctx, x - 20, y - 5 + typeShift, 4, 3, '#F1C5A2');
+    pxRect(ctx, x - 17, y - 1 + (1 - typeShift), 11, 4, '#252F4C');
+    pxRect(ctx, x - 20, y + (1 - typeShift), 4, 3, '#F1C5A2');
+  } else {
+    const waveY = Math.floor(tick / 9) % 2 === 0 ? -12 : -9;
+    pxRect(ctx, x - 11, y - 6 + breathe, 3, 9, '#252F4C');
+    pxRect(ctx, x + 8, y + waveY, 4, 8, '#313E63');
+    pxRect(ctx, x + 8, y + waveY - 2, 4, 3, '#F1C5A2');
+  }
+
+  // Head & face
+  pxRect(ctx, x - 7, y - 21 + breathe, 14, 13, '#F1C5A2');
+  pxRect(ctx, x - 6, y - 10 + breathe, 12, 2, '#DFAD87');
+
+  // Stylish silver-indigo spiky tech hair
+  pxRect(ctx, x - 8, y - 25 + breathe, 16, 5, '#1E243B');
+  pxRect(ctx, x - 7, y - 26 + breathe, 14, 2, '#3B4975');
+  pxRect(ctx, x - 9, y - 22 + breathe, 3, 7, '#1E243B');
+  pxRect(ctx, x + 6, y - 22 + breathe, 3, 7, '#1E243B');
+
+  // Headphones earcups (cyan/slate)
+  pxRect(ctx, x - 9, y - 17 + breathe, 2, 5, '#38BDF8');
+  pxRect(ctx, x + 7, y - 17 + breathe, 2, 5, '#38BDF8');
+
+  // Eyes & sleek tech visor glasses
+  const eyeShift = isEngaged ? (player.x >= x ? 1 : -1) : -2;
+  pxRect(ctx, x - 6 + eyeShift, y - 16 + breathe, 12, 4, 'rgba(30, 41, 59, 0.85)');
+  if (!blink) {
+    pxRect(ctx, x - 5 + eyeShift, y - 15 + breathe, 4, 2, '#38BDF8');
+    pxRect(ctx, x + 1 + eyeShift, y - 15 + breathe, 4, 2, '#38BDF8');
+  } else {
+    pxRect(ctx, x - 5 + eyeShift, y - 15 + breathe, 4, 1, '#7DD3FC');
+    pxRect(ctx, x + 1 + eyeShift, y - 15 + breathe, 4, 1, '#7DD3FC');
+  }
+  pxRect(ctx, x - 2 + eyeShift, y - 11 + breathe, 4, 1, '#A16E54');
+}
+
+function drawAntigravityOverlay(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  tick: number,
+  isAntigravityOpen: boolean
+) {
+  const x = Math.round(AGY_POS.x);
+  const y = Math.round(AGY_POS.y) - 34;
+  const distToPlayer = Math.hypot(player.x - AGY_POS.x, player.y - AGY_POS.y);
+  const isEngaged = isAntigravityOpen || distToPlayer <= 84;
+  const floatOffset = Math.sin(tick * 0.08) > 0 ? -1 : 0;
+  const by = y + floatOffset;
+
+  ctx.save();
+  if (isEngaged) {
+    const text = isAntigravityOpen
+      ? 'AGY · เชื่อมต่อ localhost:3000 แล้ว'
+      : 'Antigravity · พร้อมรันงานบน localhost!';
+    ctx.font = '600 10px "IBM Plex Sans Thai", sans-serif';
+    const w = Math.ceil(ctx.measureText(text).width) + 18;
+    const h = 20;
+    const bx = Math.round(x - w / 2);
+
+    pxRect(ctx, bx - 1, by - h - 1, w + 2, h + 2, '#38BDF8');
+    pxRect(ctx, bx, by - h, w, h, '#141926');
+    pxRect(
+      ctx,
+      bx + 6,
+      by - h + 8,
+      4,
+      4,
+      Math.floor(tick / 15) % 2 === 0 ? '#34D399' : '#10B981'
+    );
+    ctx.fillStyle = '#F0F9FF';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, bx + 13, by - h / 2 + 0.5);
+  } else {
+    const w = 34;
+    const h = 14;
+    const bx = Math.round(x - w / 2);
+    pxRect(ctx, bx - 1, by - h - 1, w + 2, h + 2, '#334155');
+    pxRect(ctx, bx, by - h, w, h, '#141926');
+    pxRect(ctx, bx + 4, by - h + 5, 3, 3, '#34D399');
+    ctx.font = '700 8.5px monospace';
+    ctx.fillStyle = '#7DD3FC';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('AGY', bx + 10, by - h / 2 + 0.5);
+  }
+  ctx.restore();
 }
 
 function drawShoweringPlayerSilhouette(
@@ -1622,33 +1891,47 @@ function drawAtmosphereLighting(
     ctx.closePath();
     ctx.fill();
 
-    // Office window sunbeam
+    // Expanded Office Executive window sunbeam
     ctx.beginPath();
-    ctx.moveTo(16.9 * TILE, 52);
-    ctx.lineTo(18.5 * TILE, 52);
-    ctx.lineTo(18.8 * TILE, 130);
-    ctx.lineTo(17.1 * TILE, 130);
+    ctx.moveTo(16.55 * TILE, 52);
+    ctx.lineTo(18.85 * TILE, 52);
+    ctx.lineTo(19.35 * TILE, 138);
+    ctx.lineTo(16.85 * TILE, 138);
+    ctx.closePath();
+    ctx.fill();
+
+    // Expanded Office East Library window sunbeam
+    ctx.beginPath();
+    ctx.moveTo(20.2 * TILE, 52);
+    ctx.lineTo(21.85 * TILE, 52);
+    ctx.lineTo(22.25 * TILE, 130);
+    ctx.lineTo(20.45 * TILE, 130);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Evening cozy darkness tint
+  // Evening cozy darkness tint (clipped to the asymmetric house footprint)
   if (timeOfDay === 'evening') {
     ctx.fillStyle = 'rgba(18, 22, 38, 0.34)';
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    ctx.fillRect(0, 0, WORLD_W, (MID_WALL_ROW + 1) * TILE);
+    ctx.fillRect(0, (MID_WALL_ROW + 1) * TILE, LOWER_WORLD_W, WORLD_H - (MID_WALL_ROW + 1) * TILE);
   } else if (timeOfDay === 'afternoon') {
     ctx.fillStyle = 'rgba(230, 140, 60, 0.06)';
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    ctx.fillRect(0, 0, WORLD_W, (MID_WALL_ROW + 1) * TILE);
+    ctx.fillRect(0, (MID_WALL_ROW + 1) * TILE, LOWER_WORLD_W, WORLD_H - (MID_WALL_ROW + 1) * TILE);
   }
 
-  // Warm radial glow pools (Christmas tree, desk lamp, fireplace)
+  // Warm radial glow pools (Christmas tree, desk lamps, fireplace, pinboard & lower rooms)
   const glowAlpha = timeOfDay === 'evening' ? 0.32 : 0.16;
   const lampFlicker = 1 + Math.sin(tick * 0.1) * 0.03;
 
   const lights = [
     { x: 1.85 * TILE, y: 2.75 * TILE, r: 84 * lampFlicker, color: `rgba(255, 208, 110, ${glowAlpha * 0.95})` },
-    { x: 12.7 * TILE, y: 3.45 * TILE, r: 92 * lampFlicker, color: `rgba(255, 190, 92, ${glowAlpha})` },
-    { x: 18.2 * TILE, y: 6.55 * TILE, r: 86 * lampFlicker, color: `rgba(255, 196, 108, ${glowAlpha * 0.95})` },
+    { x: 13.65 * TILE, y: 2.4 * TILE, r: 78 * lampFlicker, color: `rgba(255, 212, 128, ${glowAlpha * 0.82})` },
+    { x: 16.2 * TILE, y: 3.45 * TILE, r: 96 * lampFlicker, color: `rgba(255, 190, 92, ${glowAlpha})` },
+    { x: 16.65 * TILE, y: 8.2 * TILE, r: 94 * lampFlicker, color: `rgba(255, 204, 118, ${glowAlpha * 0.78})` },
+    { x: 22.1 * TILE, y: 6.55 * TILE, r: 90 * lampFlicker, color: `rgba(255, 196, 108, ${glowAlpha * 0.95})` },
+    { x: 12.1 * TILE, y: 10.5 * TILE, r: 74 * lampFlicker, color: `rgba(125, 211, 252, ${glowAlpha * 0.65})` },
     { x: 7.9 * TILE, y: 1.9 * TILE, r: 80 * lampFlicker, color: `rgba(244, 120, 56, ${glowAlpha * 0.95})` },
     // Lower wing lighting: kitchen range hood, dining pendant, bathroom vanity sconces & shower overhead
     { x: 3.95 * TILE, y: 14.1 * TILE, r: 78, color: `rgba(255, 214, 138, ${glowAlpha * 0.85})` },
@@ -1692,7 +1975,7 @@ function drawAtmosphereLighting(
   ctx.fillText('ห้องพักผ่อน', 1.4 * TILE, 11.65 * TILE);
   ctx.fillText('ห้องครัว', 4.15 * TILE, 21.65 * TILE);
   ctx.textAlign = 'right';
-  ctx.fillText('ห้องทำงาน · โต๊ะของมีน่า', 18.6 * TILE, 11.65 * TILE);
+  ctx.fillText('ห้องทำงาน (+50%) · โต๊ะของมีน่า', 22.55 * TILE, 11.65 * TILE);
   ctx.fillStyle = timeOfDay === 'evening' ? 'rgba(232, 246, 248, 0.58)' : 'rgba(42, 68, 72, 0.48)';
   ctx.fillText('ห้องน้ำ · ห้องอาบน้ำ', 15.65 * TILE, 21.65 * TILE);
 
@@ -1718,9 +2001,10 @@ export function renderHouseScene(
   ctx.scale(scale, scale);
   ctx.translate(-state.camera.x, -state.camera.y);
 
-  // Subtle architectural outer rim shadow around the house perimeter
+  // Subtle architectural outer rim shadow around the stepped L-shaped house perimeter
   ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.fillRect(6, 6, WORLD_W, WORLD_H);
+  ctx.fillRect(6, 6, WORLD_W, (MID_WALL_ROW + 1) * TILE);
+  ctx.fillRect(6, 6, LOWER_WORLD_W, WORLD_H);
 
   // TV turns on visually either when the YouTube modal is open or when the player clicks the remote on the sofa
   const sofaWatchingTv =
@@ -1793,6 +2077,11 @@ export function renderHouseScene(
       y: showerGlassSortY,
       draw: () => drawGlassShowerEnclosure(ctx, state.tick, state.player),
     },
+    {
+      y: AGY_POS.y,
+      draw: () =>
+        drawAntigravityNpc(ctx, state.player, state.tick, Boolean(state.isAntigravityOpen)),
+    },
   ];
   if (!minaBehindDesk) {
     drawList.push({
@@ -1808,13 +2097,19 @@ export function renderHouseScene(
   // 6. Cozy dynamic lighting
   drawAtmosphereLighting(ctx, state.timeOfDay, state.tick, tvScreenActive);
 
-  // 7. Mina's floating speech bubble (always legible above furniture and lighting)
+  // 7. Mina's floating speech bubble & Antigravity localhost status overlay
   drawMinaBubbleOverlay(
     ctx,
     state.mina,
     state.assistantMood,
     state.tick,
     state.minaBubbleText
+  );
+  drawAntigravityOverlay(
+    ctx,
+    state.player,
+    state.tick,
+    Boolean(state.isAntigravityOpen)
   );
 
   // 8. Interactable highlight & [E] cue (drawn above lighting for crisp legibility)

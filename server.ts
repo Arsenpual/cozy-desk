@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,6 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 type WorkMode = 'qa' | 'brainstorm' | 'draft';
+type AntigravityMode = 'code' | 'workspace' | 'arch';
 type TimeOfDay = 'morning' | 'afternoon' | 'evening';
 
 interface IncomingMessage {
@@ -25,6 +27,113 @@ interface ChatRequestBody {
   mode?: WorkMode;
   timeOfDay?: TimeOfDay;
   localDate?: string;
+}
+
+interface AntigravityChatRequestBody {
+  messages?: IncomingMessage[];
+  mode?: AntigravityMode;
+  focusFiles?: string[];
+}
+
+const EXCLUDED_DIRS = new Set(['node_modules', '.git', 'dist', '.gemini']);
+
+async function listSafeWorkspaceFiles(dir = __dirname, prefix = '', depth = 0): Promise<string[]> {
+  if (depth > 3) return [];
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const results: string[] = [];
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      if (EXCLUDED_DIRS.has(entry.name)) continue;
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        const sub = await listSafeWorkspaceFiles(path.join(dir, entry.name), rel, depth + 1);
+        results.push(...sub);
+      } else if (/\.(ts|tsx|js|jsx|json|css|html|md)$/i.test(entry.name)) {
+        results.push(rel);
+      }
+      if (results.length >= 80) break;
+    }
+    return results.slice(0, 80);
+  } catch {
+    return [];
+  }
+}
+
+async function readSafeWorkspaceFile(relPath: string): Promise<string | null> {
+  try {
+    const cleanRel = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!cleanRel || cleanRel.includes('..') || cleanRel.startsWith('.env')) {
+      return null;
+    }
+    const firstSeg = cleanRel.split('/')[0];
+    if (EXCLUDED_DIRS.has(firstSeg) || firstSeg.startsWith('.')) {
+      return null;
+    }
+    const fullPath = path.resolve(__dirname, cleanRel);
+    const rootWithSep = __dirname.endsWith(path.sep) ? __dirname : `${__dirname}${path.sep}`;
+    if (!fullPath.startsWith(rootWithSep)) {
+      return null;
+    }
+    const stat = await fs.stat(fullPath);
+    if (!stat.isFile() || stat.size > 250_000) {
+      return null;
+    }
+    const raw = await fs.readFile(fullPath, 'utf8');
+    return raw.slice(0, 14_000);
+  } catch {
+    return null;
+  }
+}
+
+function buildAntigravitySystemInstruction(
+  mode: AntigravityMode,
+  workspaceFiles: string[],
+  fileContexts: Array<{ path: string; content: string }>
+): string {
+  const modeGuidance: Record<AntigravityMode, string> = {
+    code: [
+      'โหมดปัจจุบัน: Code & Debug (เขียนโค้ด แก้บัค และรีวิวโค้ด)',
+      '- วิเคราะห์ปัญหาอย่างแม่นยำ พร้อมแสดงตัวอย่างโค้ด TypeScript / React / Node.js ที่สะอาด ปลอดภัย และไม่เสี่ยงเกิดบัค',
+      '- ชี้จุดที่ควรระวัง (Edge Cases) และวิธีทดสอบอย่างกระชับ',
+    ].join('\n'),
+    workspace: [
+      'โหมดปัจจุบัน: Workspace Explorer (สำรวจและอธิบายไฟล์ในโปรเจกต์บน localhost)',
+      '- อ้างอิงจากรายชื่อไฟล์และเนื้อหาไฟล์ในโปรเจกต์ที่แนบให้ด้านล่างตามจริง',
+      '- อธิบายการทำงานของแต่ละไฟล์ ความเชื่อมโยงของระบบ และจุดที่สามารถปรับปรุงต่อได้',
+    ].join('\n'),
+    arch: [
+      'โหมดปัจจุบัน: Architecture & Localhost CLI (ออกแบบสถาปัตยกรรมและคำสั่งรันงาน)',
+      '- แนะนำโครงสร้างระบบ การเชื่อมต่อ API บน localhost คำสั่ง CLI/Terminal และแนวทางที่เสถียรที่สุด',
+      '- จัดลำดับขั้นตอนเป็นข้อๆ ที่นำไปรันหรือพัฒนาต่อได้ทันที',
+    ].join('\n'),
+  };
+
+  const fileListBlock =
+    workspaceFiles.length > 0
+      ? `รายชื่อไฟล์ในโปรเจกต์บน localhost (${path.basename(__dirname)}):\n${workspaceFiles
+          .map((f) => `- ${f}`)
+          .join('\n')}`
+      : '';
+
+  const attachedFilesBlock =
+    fileContexts.length > 0
+      ? `เนื้อหาไฟล์จริงจากเครื่อง localhost ที่ถูกดึงมาตรวจสอบ:\n\n${fileContexts
+          .map((f) => `### ไฟล์: \`${f.path}\`\n\`\`\`\n${f.content}\n\`\`\``)
+          .join('\n\n')}`
+      : '';
+
+  return [
+    'คุณคือ "Antigravity (AGY)" ตัวละคร AI Coding & Localhost Agent ประจำสถานี Dev Station ในห้องทำงานของแอพ Cozy Desk (รันอยู่บน http://localhost)',
+    'บุคลิกของคุณ: เชี่ยวชาญด้านวิศวกรรมซอฟต์แวร์ เฉียบคม สุภาพ เป็นกันเอง เน้นความเสถียรของระบบ (Zero-Bug Mindset) และอธิบายเรื่องเทคนิคให้เข้าใจง่าย',
+    'ภาษา: ตอบเป็นภาษาไทยอย่างเป็นธรรมชาติ (ใช้ศัพท์เทคนิคและโค้ดภาษาอังกฤษตามมาตรฐาน)',
+    'รูปแบบการตอบ: ใช้ Markdown และ Code Block ที่มีระบุภาษาชัดเจน กระชับ ตรงประเด็น',
+    modeGuidance[mode] ?? modeGuidance.code,
+    fileListBlock,
+    attachedFilesBlock,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 const PRIMARY_MODEL = 'gemini-3.1-flash-lite';
@@ -204,6 +313,225 @@ async function startServer() {
       ok: true,
       model: PRIMARY_MODEL,
     });
+  });
+
+  app.get('/api/antigravity/status', async (_req, res) => {
+    const files = await listSafeWorkspaceFiles();
+    res.json({
+      ok: true,
+      agent: 'Antigravity Localhost Agent',
+      host: `http://localhost:${PORT}`,
+      endpoint: '/api/antigravity/chat',
+      workspace: path.basename(__dirname),
+      model: PRIMARY_MODEL,
+      fileCount: files.length,
+      files,
+    });
+  });
+
+  app.post('/api/antigravity/chat', async (req, res) => {
+    const body = (req.body ?? {}) as AntigravityChatRequestBody;
+    const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+    const mode: AntigravityMode =
+      body.mode === 'workspace' || body.mode === 'arch' ? body.mode : 'code';
+    const requestedFiles = Array.isArray(body.focusFiles)
+      ? body.focusFiles.filter((f): f is string => typeof f === 'string')
+      : [];
+
+    const filtered = rawMessages
+      .filter(
+        (m): m is IncomingMessage =>
+          Boolean(m) &&
+          (m.role === 'user' || m.role === 'assistant') &&
+          typeof m.content === 'string' &&
+          m.content.trim().length > 0
+      )
+      .slice(-20);
+
+    const sanitizedMessages: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    for (const m of filtered) {
+      const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+      const text = m.content.trim().slice(0, 6000);
+      const prev = sanitizedMessages[sanitizedMessages.length - 1];
+      if (prev && prev.role === role) {
+        prev.parts[0].text = `${prev.parts[0].text}\n\n${text}`.slice(0, 8000);
+      } else {
+        sanitizedMessages.push({ role, parts: [{ text }] });
+      }
+    }
+
+    if (
+      sanitizedMessages.length === 0 ||
+      sanitizedMessages[sanitizedMessages.length - 1].role !== 'user'
+    ) {
+      res.status(400).json({ error: 'กรุณาพิมพ์คำสั่งหรือคำถามก่อนส่งให้ Antigravity ครับ' });
+      return;
+    }
+
+    let geminiClient: GoogleGenAI;
+    try {
+      geminiClient = createGeminiClient();
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      res.status(classified.status).json({ error: classified.message });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    res.write(': connected\n\n');
+
+    let clientDisconnected = false;
+    const clientAbort = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        clientAbort.abort();
+      }
+    });
+
+    const keepAliveTimer = setInterval(() => {
+      if (!clientDisconnected && !res.writableEnded) {
+        res.write(': keepalive\n\n');
+      }
+    }, 8000);
+
+    try {
+      const workspaceFiles = await listSafeWorkspaceFiles();
+      const lastUserText = sanitizedMessages[sanitizedMessages.length - 1].parts[0].text.toLowerCase();
+
+      // Match up to 3 relevant workspace files (from explicit focusFiles or mentioned by filename in prompt)
+      const matchedPaths: string[] = [];
+      for (const reqFile of requestedFiles) {
+        if (workspaceFiles.includes(reqFile) && !matchedPaths.includes(reqFile)) {
+          matchedPaths.push(reqFile);
+        }
+      }
+      for (const wf of workspaceFiles) {
+        if (matchedPaths.length >= 3) break;
+        const base = path.posix.basename(wf).toLowerCase();
+        if (
+          !matchedPaths.includes(wf) &&
+          (lastUserText.includes(wf.toLowerCase()) ||
+            (base.length >= 5 && lastUserText.includes(base)))
+        ) {
+          matchedPaths.push(wf);
+        }
+      }
+
+      const fileContexts: Array<{ path: string; content: string }> = [];
+      for (const relPath of matchedPaths.slice(0, 3)) {
+        const content = await readSafeWorkspaceFile(relPath);
+        if (content) {
+          fileContexts.push({ path: relPath, content });
+        }
+      }
+
+      if (fileContexts.length > 0 && !clientDisconnected && !res.writableEnded) {
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'inspected_files',
+            files: fileContexts.map((f) => f.path),
+          })}\n\n`
+        );
+      }
+
+      const systemInstruction = buildAntigravitySystemInstruction(
+        mode,
+        workspaceFiles,
+        fileContexts
+      );
+
+      let emittedAnyChunk = false;
+      const runStream = async (
+        modelName: string,
+        useLowThinking: boolean,
+        firstChunkTimeoutMs: number
+      ) => {
+        const attemptAbort = new AbortController();
+        const forwardAbort = () => attemptAbort.abort();
+        if (clientAbort.signal.aborted) {
+          attemptAbort.abort();
+        } else {
+          clientAbort.signal.addEventListener('abort', forwardAbort);
+        }
+
+        let receivedFirstEvent = false;
+        const firstChunkTimer = setTimeout(() => {
+          if (!receivedFirstEvent) {
+            attemptAbort.abort();
+          }
+        }, firstChunkTimeoutMs);
+
+        try {
+          const stream = await geminiClient.models.generateContentStream({
+            model: modelName,
+            contents: sanitizedMessages,
+            config: useLowThinking
+              ? {
+                  systemInstruction,
+                  abortSignal: attemptAbort.signal,
+                  thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+                }
+              : {
+                  systemInstruction,
+                  abortSignal: attemptAbort.signal,
+                },
+          });
+
+          for await (const chunk of stream) {
+            if (!receivedFirstEvent) {
+              receivedFirstEvent = true;
+              clearTimeout(firstChunkTimer);
+            }
+            if (clientDisconnected || res.writableEnded) {
+              break;
+            }
+            const text = chunk.text ?? '';
+            if (text) {
+              emittedAnyChunk = true;
+              res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
+            }
+          }
+        } finally {
+          clearTimeout(firstChunkTimer);
+          clientAbort.signal.removeEventListener('abort', forwardAbort);
+        }
+      };
+
+      try {
+        await runStream(PRIMARY_MODEL, false, 20000);
+      } catch (primaryErr) {
+        if (clientDisconnected) return;
+        const primaryClassified = classifyGeminiError(primaryErr);
+        if (
+          emittedAnyChunk ||
+          primaryClassified.status === 401 ||
+          primaryClassified.status === 403
+        ) {
+          throw primaryErr;
+        }
+        await runStream(FALLBACK_MODEL, true, 30000);
+      }
+
+      if (!clientDisconnected && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      }
+    } catch (err) {
+      if (clientDisconnected) return;
+      const classified = classifyGeminiError(err);
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: classified.message })}\n\n`);
+      }
+    } finally {
+      clearInterval(keepAliveTimer);
+      if (!res.writableEnded) {
+        res.end();
+      }
+    }
   });
 
   app.get('/favicon.ico', (_req, res) => {

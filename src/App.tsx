@@ -13,6 +13,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
+import { AntigravityModal } from './components/AntigravityModal';
 import { DriveTableModal } from './components/DriveTableModal';
 import { GameCanvas } from './components/GameCanvas';
 import { TasksPinboardModal } from './components/TasksPinboardModal';
@@ -181,6 +182,7 @@ export default function App() {
   const [isTvOpen, setIsTvOpen] = useState(false);
   const [isPinboardOpen, setIsPinboardOpen] = useState(false);
   const [isDriveOpen, setIsDriveOpen] = useState(false);
+  const [isAntigravityOpen, setIsAntigravityOpen] = useState(false);
   const [customTvFeed, setCustomTvFeed] = useState<TvFeedItem[]>(() =>
     loadStorage<TvFeedItem[]>(STORAGE_TV_FEED_KEY, [])
   );
@@ -325,6 +327,11 @@ export default function App() {
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (isAntigravityOpen) {
+        setIsAntigravityOpen(false);
+        soundEngine.playInteract();
+        return;
+      }
       if (isDriveOpen) {
         setIsDriveOpen(false);
         soundEngine.playInteract();
@@ -369,6 +376,7 @@ export default function App() {
   }, [
     exitFullscreenMap,
     gameState,
+    isAntigravityOpen,
     isDriveOpen,
     isFullscreenMap,
     isPinboardOpen,
@@ -391,7 +399,13 @@ export default function App() {
       ) {
         return;
       }
-      if (gameState !== 'PLAYING' || isTvOpen || isPinboardOpen || isDriveOpen) {
+      if (
+        gameState !== 'PLAYING' ||
+        isTvOpen ||
+        isPinboardOpen ||
+        isDriveOpen ||
+        isAntigravityOpen
+      ) {
         return;
       }
       e.preventDefault();
@@ -399,7 +413,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleFullscreenKey);
     return () => window.removeEventListener('keydown', handleFullscreenKey);
-  }, [gameState, isDriveOpen, isPinboardOpen, isTvOpen, toggleFullscreenMap]);
+  }, [gameState, isAntigravityOpen, isDriveOpen, isPinboardOpen, isTvOpen, toggleFullscreenMap]);
 
   const handleStartGame = () => {
     soundEngine.playInteract();
@@ -591,6 +605,12 @@ export default function App() {
       if (id === 'drive_table') {
         soundEngine.playInteract();
         setIsDriveOpen(true);
+        return;
+      }
+
+      if (id === 'antigravity_desk') {
+        soundEngine.playEnterOffice();
+        setIsAntigravityOpen(true);
       }
     },
     [showMinaBubble, showToast, tipIndex]
@@ -1189,7 +1209,8 @@ export default function App() {
                   extraPinCount={extraPinCount}
                   isTvOn={isTvOpen}
                   isDriveOpen={isDriveOpen}
-                  isModalOpen={isTvOpen || isPinboardOpen || isDriveOpen}
+                  isAntigravityOpen={isAntigravityOpen}
+                  isModalOpen={isTvOpen || isPinboardOpen || isDriveOpen || isAntigravityOpen}
                   isFullscreenMap={isFullscreenMap}
                   onZoneChange={handleZoneChange}
                   onNearestChange={setNearestInteractable}
@@ -1510,6 +1531,14 @@ export default function App() {
           onClose={() => {
             soundEngine.playInteract();
             setIsDriveOpen(false);
+          }}
+        />
+      )}
+      {isAntigravityOpen && (
+        <AntigravityModal
+          onClose={() => {
+            soundEngine.playInteract();
+            setIsAntigravityOpen(false);
           }}
         />
       )}

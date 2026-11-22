@@ -94,7 +94,19 @@ export type InteractableId =
   | 'pinboard'
   | 'workdesk'
   | 'drive_table'
-  | 'mina_desk';
+  | 'mina_desk'
+  | 'antigravity_desk';
+
+export type AntigravityMode = 'code' | 'workspace' | 'arch';
+
+export interface AntigravityMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  mode: AntigravityMode;
+  createdAt: number;
+  inspectedFiles?: string[];
+}
 
 export interface GoogleDriveFile {
   id: string;

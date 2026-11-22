@@ -6,12 +6,13 @@ import {
   KITCHEN_DINING_RECT,
   KITCHEN_DOOR_COL_END,
   KITCHEN_DOOR_COL_START,
+  LOWER_EAST_WALL_COL,
   LOWER_FLOOR_ROW_END,
   LOWER_FLOOR_ROW_START,
+  LOWER_WORLD_W,
   MID_WALL_ROW,
   SOUTH_WALL_ROW,
   TILE,
-  WORLD_W,
 } from './houseMap';
 
 export function isSoapInHolder(player?: PlayerState): boolean {
@@ -214,7 +215,7 @@ export function drawLowerRoomWalls(
     ctx,
     (KITCHEN_DOOR_COL_END + 1) * TILE,
     midY,
-    (19 - KITCHEN_DOOR_COL_END - 1) * TILE + 5,
+    (LOWER_EAST_WALL_COL - KITCHEN_DOOR_COL_END - 1) * TILE + 5,
     18
   );
 
@@ -389,8 +390,8 @@ export function drawLowerRoomWalls(
   pxRect(ctx, dx + 3, lowerDoorY + 4, TILE - 6, lowerSegH - 4, '#6E4A33');
   pxRect(ctx, dx + 4, lowerDoorY, TILE - 8, 4, '#8D6042'); // Bottom doorway jamb trim
 
-  // South outer wall baseboard shadow & clean trim
-  pxRect(ctx, TILE - 5, SOUTH_WALL_ROW * TILE, WORLD_W - 2 * TILE + 10, 6, '#5B3E2B');
+  // South outer wall baseboard shadow & clean trim (for Lower Wing: Kitchen & Bathroom)
+  pxRect(ctx, TILE - 5, SOUTH_WALL_ROW * TILE, LOWER_WORLD_W - 2 * TILE + 10, 6, '#5B3E2B');
 }
 
 export function drawKitchenFurniture(ctx: CanvasRenderingContext2D, tick: number) {
