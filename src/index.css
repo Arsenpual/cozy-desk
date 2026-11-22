@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-frame: #1C1917;
+    --bg-panel: #FAF6F0;
+    --bg-panel-subtle: #F2EAE0;
+    --border-warm: #E2D9CC;
+    --text-ink: #29221D;
+    --text-muted: #6E6258;
+    --accent-lamp: #D97736;
+    --accent-sage: #4D7C6F;
+  }
+
+  body {
+    font-family: 'IBM Plex Sans Thai', system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-frame);
+    color: #F5EFE6;
+    overflow: hidden;
+  }
+}
+
+.font-display {
+  font-family: 'Prompt', 'IBM Plex Sans Thai', sans-serif;
+}
+
+.font-pixel {
+  font-family: 'Silkscreen', monospace;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Subtle warm scrollbars for workspace chat and drafts */
+.cozy-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.cozy-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cozy-scroll::-webkit-scrollbar-thumb {
+  background: rgba(110, 98, 88, 0.28);
+  border-radius: 3px;
+}
+
+.cozy-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(110, 98, 88, 0.45);
+}

@@ -1,0 +1,496 @@
+import type { InspectableObject } from '../types/game';
+import {
+  BATH_DOOR_ROW_END,
+  BATH_DOOR_ROW_START,
+  DIVIDER_COL,
+  LOWER_FLOOR_ROW_START,
+  MID_WALL_ROW,
+  TILE,
+} from './houseMap';
+
+const WALL_FACE_Y = MID_WALL_ROW * TILE + 18;
+
+// Mirror & wall sconce coordinates (matches drawLowerRoomWalls in lowerRoomsRenderer.ts)
+const MIR_X = Math.round(11.78 * TILE);
+const MIR_Y = WALL_FACE_Y + 4;
+const MIR_W = 80;
+const MIR_H = 30;
+
+// Rain shower pipe anchor
+const SH_PIPE_X = Math.round(17.7 * TILE);
+
+// Vanity cabinet coordinates (matches drawBathroomFurniture in lowerRoomsRenderer.ts)
+const VANITY_X = Math.round(11.35 * TILE);
+const VANITY_Y = Math.round(13.85 * TILE);
+const VANITY_W = Math.round(3.35 * TILE);
+const VANITY_H = Math.round(1.25 * TILE);
+
+// Shower wet-zone & glass enclosure coordinates
+const SHOWER_FLOOR_X = Math.round(15.52 * TILE);
+const SHOWER_FLOOR_Y = LOWER_FLOOR_ROW_START * TILE;
+const SHOWER_FLOOR_W = Math.round(18.98 * TILE) - SHOWER_FLOOR_X;
+const SHOWER_FLOOR_H = Math.round(18.02 * TILE) - SHOWER_FLOOR_Y;
+
+const GLASS_X = Math.round(15.45 * TILE);
+const GLASS_TOP_Y = Math.round(13.9 * TILE);
+const GLASS_DOOR_TOP_Y = Math.round(16.12 * TILE);
+const GLASS_BOT_Y = Math.round(17.98 * TILE);
+const GLASS_RIGHT_X = Math.round(18.98 * TILE);
+
+const DRAIN_X = Math.round(17.45 * TILE);
+const DRAIN_Y = Math.round(15.9 * TILE);
+
+// Linen cabinet, toilet, washing machine coordinates
+const LINEN_X = Math.round(11.1 * TILE);
+const LINEN_Y = Math.round(19.95 * TILE);
+const LINEN_W = Math.round(1.35 * TILE);
+const LINEN_H = Math.round(1.85 * TILE);
+
+const TOILET_X = Math.round(13.3 * TILE);
+const TOILET_Y = Math.round(20.35 * TILE);
+
+const WASHER_X = Math.round(17.3 * TILE);
+const WASHER_Y = Math.round(19.95 * TILE);
+const WASHER_W = Math.round(1.6 * TILE);
+const WASHER_H = Math.round(1.85 * TILE);
+
+/**
+ * Bathroom inspectable objects (hover 2 seconds to reveal name & details).
+ * Higher `priority` wins when smaller countertop/nested props overlap a larger fixture.
+ */
+export const BATHROOM_INSPECTABLES: InspectableObject[] = [
+  // --- North wall fixtures ---
+  {
+    id: 'bath_sconce_left',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · ผนัง',
+    name: 'โคมไฟผนังข้างกระจก',
+    detail: 'โคมไฟกิ่งสีทองเหลืองให้แสงสว่างอุ่นๆ บริเวณอ่างล้างหน้า',
+    x: MIR_X - 9,
+    y: MIR_Y + 5,
+    w: 7,
+    h: 14,
+    priority: 22,
+  },
+  {
+    id: 'bath_sconce_right',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · ผนัง',
+    name: 'โคมไฟผนังข้างกระจก',
+    detail: 'โคมไฟกิ่งสีทองเหลืองให้แสงสว่างอุ่นๆ บริเวณอ่างล้างหน้า',
+    x: MIR_X + MIR_W + 2,
+    y: MIR_Y + 5,
+    w: 7,
+    h: 14,
+    priority: 22,
+  },
+  {
+    id: 'bath_mirror',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · ผนัง',
+    name: 'กระจกเงาและชั้นวางกระจก',
+    detail: 'กระจกกรอบไม้โอ๊คบานใหญ่พร้อมหิ้งกระจกบางหน้าอ่างล้างหน้า',
+    x: MIR_X,
+    y: MIR_Y,
+    w: MIR_W,
+    h: MIR_H + 4,
+    priority: 16,
+  },
+  {
+    id: 'bath_vent_window',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'หน้าต่างบานฝ้าระบายอากาศ',
+    detail: 'หน้าต่างกระจกฝ้าช่วยระบายความชื้นและรับแสงธรรมชาติ',
+    x: Math.round(15.82 * TILE),
+    y: WALL_FACE_Y + 5,
+    w: 36,
+    h: 22,
+    priority: 16,
+  },
+  {
+    id: 'bath_rain_shower',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'ชุดฝักบัวเรนชาวเวอร์อัตโนมัติ',
+    detail: 'ฝักบัวก้านแข็งโครเมียมพร้อมเซนเซอร์ปล่อยสายน้ำอุ่นอัตโนมัติเมื่อเดินเข้าโซนเปียก',
+    x: SH_PIPE_X - 8,
+    y: WALL_FACE_Y + 4,
+    w: 24,
+    h: 35,
+    priority: 22,
+  },
+
+  // --- Vanity counter & tabletop props ---
+  {
+    id: 'bath_vanity_fern',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · เคาน์เตอร์',
+    name: 'กระถางต้นเฟิร์นจิ๋ว',
+    detail: 'ต้นเฟิร์นขนาดเล็กในกระถางดินเผาประดับมุมอ่างล้างหน้า',
+    x: VANITY_X + 5,
+    y: VANITY_Y + 2,
+    w: 14,
+    h: 19,
+    priority: 25,
+  },
+  {
+    id: 'bath_hand_towels',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · เคาน์เตอร์',
+    name: 'ผ้าขนหนูเช็ดมือม้วน',
+    detail: 'ผ้าขนหนูสีขาวม้วนวางไว้สำหรับเช็ดมือข้างอ่าง',
+    x: VANITY_X + 20,
+    y: VANITY_Y + 10,
+    w: 12,
+    h: 13,
+    priority: 25,
+  },
+  {
+    id: 'bath_sink_basin',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · เคาน์เตอร์',
+    name: 'อ่างล้างหน้าและก๊อกน้ำ',
+    detail: 'อ่างล้างหน้าเซรามิกสีขาวแบบฝังเคาน์เตอร์พร้อมก๊อกโครเมียม',
+    x: VANITY_X + 37,
+    y: VANITY_Y + 3,
+    w: 34,
+    h: 22,
+    priority: 24,
+  },
+  {
+    id: 'bath_hand_soap',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · เคาน์เตอร์',
+    name: 'ขวดปั๊มสบู่เหลวล้างมือ',
+    detail: 'ขวดสบู่เหลวล้างมือหัวปั๊มวางสะดวกข้างอ่างล้างหน้า',
+    x: VANITY_X + 76,
+    y: VANITY_Y + 6,
+    w: 9,
+    h: 13,
+    priority: 25,
+  },
+  {
+    id: 'bath_toothbrush_cup',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · เคาน์เตอร์',
+    name: 'แก้วใส่แปรงสีฟัน',
+    detail: 'แก้วเซรามิกใส่แปรงสีฟันสีฟ้าและสีชมพู',
+    x: VANITY_X + 89,
+    y: VANITY_Y + 5,
+    w: 10,
+    h: 15,
+    priority: 25,
+  },
+  {
+    id: 'bath_vanity_cabinet',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนแห้ง',
+    name: 'เคาน์เตอร์อ่างล้างหน้าไม้โอ๊ค',
+    detail: 'ตู้เก็บของ 3 บานท็อปหินอ่อนสีขาวสำหรับวางของใช้ประจำวัน',
+    x: VANITY_X,
+    y: VANITY_Y,
+    w: VANITY_W,
+    h: VANITY_H,
+    priority: 10,
+  },
+
+  // --- Shower room interior & glass enclosure ---
+  {
+    id: 'bath_shower_caddy',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'ชั้นวางแชมพูและครีมอาบน้ำ',
+    detail: 'ชั้นกระจกเข้ามุมวางขวดแชมพู ครีมอาบน้ำ และฟองน้ำอาบน้ำ',
+    x: Math.round(18.25 * TILE),
+    y: Math.round(14.0 * TILE),
+    w: 22,
+    h: 22,
+    priority: 22,
+  },
+  {
+    id: 'bath_soap_holder',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'ที่เก็บสบู่และสบู่ก้อน',
+    detail: 'ถาดวางสบู่โครเมียมติดผนังสำหรับหยิบสบู่มาถูตัวและวางเก็บกลับที่เดิม',
+    x: Math.round(18.15 * TILE),
+    y: Math.round(14.9 * TILE),
+    w: 22,
+    h: 16,
+    priority: 24,
+  },
+  {
+    id: 'bath_shower_drain',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'ตะแกรงท่อระบายน้ำ',
+    detail: 'ฝาท่อระบายน้ำสแตนเลสทรงสี่เหลี่ยมกลางพื้นห้องอาบน้ำ',
+    x: DRAIN_X - 8,
+    y: DRAIN_Y - 8,
+    w: 16,
+    h: 16,
+    priority: 20,
+  },
+  {
+    id: 'bath_shower_glass_left',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'ฉากกั้นกระจกนิรภัยทึบแสงอัตโนมัติ',
+    detail: 'แผงกระจกนิรภัยแบ่งโซนเปียก-แห้งที่จะปรับเป็นกระจกทึบบังสายตาเฉพาะตอนอาบน้ำ',
+    x: GLASS_X - 2,
+    y: GLASS_TOP_Y,
+    w: 11,
+    h: GLASS_DOOR_TOP_Y - GLASS_TOP_Y,
+    priority: 18,
+  },
+  {
+    id: 'bath_shower_door',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'ประตูบานเลื่อนกระจกทึบอัตโนมัติ',
+    detail: 'ประตูกระจกบานเลื่อนที่จะเลื่อนปิดและปรับทึบป้องกันภาพเปลือยอัตโนมัติขณะอาบน้ำ',
+    x: GLASS_X - 2,
+    y: GLASS_DOOR_TOP_Y,
+    w: 10,
+    h: GLASS_BOT_Y - GLASS_DOOR_TOP_Y,
+    priority: 18,
+  },
+  {
+    id: 'bath_shower_glass_south',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'ผนังกระจกและธรณีกั้นน้ำ',
+    detail: 'กระจกนิรภัยและขอบหินอ่อนกันน้ำไหลออกนอกโซนเปียก ปรับทึบอัตโนมัติเมื่ออาบน้ำ',
+    x: GLASS_X,
+    y: GLASS_BOT_Y - 16,
+    w: GLASS_RIGHT_X - GLASS_X,
+    h: 24,
+    priority: 18,
+  },
+  {
+    id: 'bath_shower_zone',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนอาบน้ำ',
+    name: 'โซนห้องอาบน้ำอัตโนมัติ (พื้นที่เปียก)',
+    detail: 'เมื่อเดินเข้าไปน้ำฝักบัวจะไหลอัตโนมัติ พร้อมปิดกระจกทึบป้องกันภาพเปลือยให้เห็นลางๆ ขณะหยิบสบู่ ถูสบู่ และเก็บสบู่',
+    x: SHOWER_FLOOR_X,
+    y: SHOWER_FLOOR_Y,
+    w: SHOWER_FLOOR_W,
+    h: SHOWER_FLOOR_H,
+    priority: 5,
+  },
+
+  // --- Floor mats, scale & doorway ---
+  {
+    id: 'bath_vanity_mat',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนแห้ง',
+    name: 'พรมเช็ดเท้าหน้าอ่างล้างหน้า',
+    detail: 'พรมผ้าทอสีครีมนุ่มวางหน้าเคาน์เตอร์อ่างล้างหน้า',
+    x: Math.round(12.05 * TILE),
+    y: Math.round(15.22 * TILE),
+    w: 64,
+    h: 18,
+    priority: 12,
+  },
+  {
+    id: 'bath_shower_mat',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนแห้ง',
+    name: 'พรมเช็ดเท้าหน้าห้องอาบน้ำ',
+    detail: 'พรมซับน้ำสีเขียวเซจวางรับเท้าหน้าประตูห้องอาบน้ำ',
+    x: Math.round(13.95 * TILE),
+    y: Math.round(16.35 * TILE),
+    w: 38,
+    h: 45,
+    priority: 12,
+  },
+  {
+    id: 'bath_scale',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนแห้ง',
+    name: 'เครื่องชั่งน้ำหนักดิจิทัล',
+    detail: 'เครื่องชั่งน้ำหนักสีขาวทรงมินิมอลพร้อมหน้าจอแสดงผลดิจิทัล',
+    x: Math.round(12.55 * TILE),
+    y: Math.round(18.8 * TILE),
+    w: 22,
+    h: 20,
+    priority: 16,
+  },
+  {
+    id: 'bath_doorway',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · ทางเข้า',
+    name: 'ประตูทางเข้าห้องน้ำ',
+    detail: 'ธรณีประตูหินอ่อนเชื่อมต่อจากห้องครัวเข้าสู่ห้องน้ำ',
+    x: DIVIDER_COL * TILE + 8,
+    y: BATH_DOOR_ROW_START * TILE,
+    w: 16,
+    h: (BATH_DOOR_ROW_END - BATH_DOOR_ROW_START + 1) * TILE,
+    priority: 10,
+  },
+
+  // --- West & South wall fixtures ---
+  {
+    id: 'bath_towel_rack',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนแห้ง',
+    name: 'ราวแขวนผ้าเช็ดตัวติดผนัง',
+    detail: 'ราวแขวนไม้พร้อมผ้าเช็ดตัวสีครีมและสีเขียวเซจ',
+    x: Math.round(11.08 * TILE),
+    y: Math.round(18.35 * TILE),
+    w: 20,
+    h: 38,
+    priority: 16,
+  },
+  {
+    id: 'bath_cabinet_fern',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · ของตกแต่ง',
+    name: 'กระถางต้นเฟิร์นประดับตู้',
+    detail: 'ต้นเฟิร์นชอบความชื้นวางตกแต่งบนมุมตู้เก็บผ้า',
+    x: LINEN_X + 27,
+    y: LINEN_Y - 6,
+    w: 11,
+    h: 14,
+    priority: 22,
+  },
+  {
+    id: 'bath_linen_cabinet',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนแห้ง',
+    name: 'ตู้ไม้เก็บผ้าเช็ดตัวและของใช้',
+    detail: 'ตู้บานเกล็ดพร้อมชั้นวางผ้าขนหนูพับและกระดาษทิชชู่สำรอง',
+    x: LINEN_X,
+    y: LINEN_Y,
+    w: LINEN_W,
+    h: LINEN_H,
+    priority: 12,
+  },
+  {
+    id: 'bath_toilet_paper',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · สุขภัณฑ์',
+    name: 'ที่แขวนกระดาษชำระ',
+    detail: 'ม้วนกระดาษทิชชู่ติดตั้งด้านข้างโถสุขภัณฑ์',
+    x: TOILET_X - 5,
+    y: TOILET_Y + 30,
+    w: 9,
+    h: 12,
+    priority: 22,
+  },
+  {
+    id: 'bath_bidet_sprayer',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · สุขภัณฑ์',
+    name: 'สายฉีดชำระโครเมียม',
+    detail: 'หัวฉีดชำระแบบมือกดติดตั้งข้างโถสุขภัณฑ์',
+    x: TOILET_X + 39,
+    y: TOILET_Y + 31,
+    w: 7,
+    h: 11,
+    priority: 22,
+  },
+  {
+    id: 'bath_toilet',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · สุขภัณฑ์',
+    name: 'โถสุขภัณฑ์ (ชักโครก)',
+    detail: 'ชักโครกเซรามิกสีขาวระบบกดชำระสองปุ่ม',
+    x: TOILET_X + 3,
+    y: TOILET_Y,
+    w: 37,
+    h: 45,
+    priority: 14,
+  },
+  {
+    id: 'bath_pedal_bin',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนแห้ง',
+    name: 'ถังขยะห้องน้ำฝาไม้ไผ่',
+    detail: 'ถังขยะมีฝาปิดลายไม้ไผ่แบบเหยียบวางข้างโถสุขภัณฑ์',
+    x: Math.round(14.8 * TILE),
+    y: Math.round(21.0 * TILE),
+    w: 20,
+    h: 22,
+    priority: 16,
+  },
+  {
+    id: 'bath_laundry_hamper',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนซักผ้า',
+    name: 'ตะกร้าผ้าหวายสาน',
+    detail: 'ตะกร้าหวายสำหรับใส่เสื้อผ้าที่รอซัก',
+    x: Math.round(16.05 * TILE),
+    y: Math.round(20.25 * TILE),
+    w: Math.round(1.05 * TILE),
+    h: Math.round(1.4 * TILE),
+    priority: 16,
+  },
+  {
+    id: 'bath_detergent',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนซักผ้า',
+    name: 'ขวดน้ำยาซักผ้า',
+    detail: 'แกลลอนน้ำยาซักผ้าสีฟ้าวางบนเครื่องซักผ้า',
+    x: WASHER_X + 5,
+    y: WASHER_Y + 3,
+    w: 12,
+    h: 15,
+    priority: 22,
+  },
+  {
+    id: 'bath_folded_laundry',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนซักผ้า',
+    name: 'กองผ้าพับ',
+    detail: 'ผ้าขนหนูและผ้าที่พับวางพักไว้บนเครื่องซักผ้า',
+    x: WASHER_X + 22,
+    y: WASHER_Y + 6,
+    w: 20,
+    h: 11,
+    priority: 22,
+  },
+  {
+    id: 'bath_washing_machine',
+    zone: 'bathroom',
+    areaLabel: 'ห้องน้ำ · โซนซักผ้า',
+    name: 'เครื่องซักผ้าฝาหน้า',
+    detail: 'เครื่องซักผ้าอัตโนมัติพร้อมแผงควบคุมและไฟแสดงสถานะ',
+    x: WASHER_X,
+    y: WASHER_Y,
+    w: WASHER_W,
+    h: WASHER_H,
+    priority: 14,
+  },
+];
+
+export const INSPECTABLE_OBJECTS: InspectableObject[] = [
+  ...BATHROOM_INSPECTABLES,
+];
+
+/**
+ * Returns the most specific inspectable object under world coordinates (wx, wy).
+ * Higher priority wins; ties are broken by smallest bounding area so detailed
+ * items sitting on furniture take precedence over the furniture underneath.
+ */
+export function getInspectableAtPoint(wx: number, wy: number): InspectableObject | null {
+  let best: InspectableObject | null = null;
+  let bestPriority = -Infinity;
+  let bestArea = Infinity;
+
+  for (const obj of INSPECTABLE_OBJECTS) {
+    if (wx >= obj.x && wx <= obj.x + obj.w && wy >= obj.y && wy <= obj.y + obj.h) {
+      const priority = obj.priority ?? 0;
+      const area = obj.w * obj.h;
+      if (priority > bestPriority || (priority === bestPriority && area < bestArea)) {
+        best = obj;
+        bestPriority = priority;
+        bestArea = area;
+      }
+    }
+  }
+
+  return best;
+}
