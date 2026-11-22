@@ -75,6 +75,7 @@ export async function fetchTasks(
   taskListId: string
 ): Promise<GoogleTask[]> {
   interface TasksResponse {
+    nextPageToken?: string;
     items?: Array<{
       id?: string;
       title?: string;
@@ -86,12 +87,33 @@ export async function fetchTasks(
     }>;
   }
 
-  const data = await tasksFetch<TasksResponse>(
-    `/lists/${encodeURIComponent(taskListId)}/tasks?showCompleted=true&showHidden=true&maxResults=100`,
-    accessToken
-  );
+  const allItems: NonNullable<TasksResponse['items']> = [];
+  let pageToken: string | undefined;
+  let pageCount = 0;
 
-  return (data.items ?? [])
+  do {
+    const query = new URLSearchParams({
+      showCompleted: 'true',
+      showHidden: 'true',
+      maxResults: '100',
+    });
+    if (pageToken) {
+      query.set('pageToken', pageToken);
+    }
+
+    const data = await tasksFetch<TasksResponse>(
+      `/lists/${encodeURIComponent(taskListId)}/tasks?${query.toString()}`,
+      accessToken
+    );
+
+    if (data.items?.length) {
+      allItems.push(...data.items);
+    }
+    pageToken = data.nextPageToken;
+    pageCount += 1;
+  } while (pageToken && pageCount < 5);
+
+  return allItems
     .filter(
       (item): item is { id: string; title?: string; notes?: string; due?: string; status?: string; updated?: string } =>
         Boolean(item.id) && !item.deleted
@@ -104,6 +126,22 @@ export async function fetchTasks(
       status: item.status === 'completed' ? 'completed' : 'needsAction',
       updated: item.updated,
     }));
+}
+
+export interface GoogleTaskListWithTasks extends GoogleTaskList {
+  tasks: GoogleTask[];
+}
+
+export async function fetchAllTaskListsWithTasks(
+  accessToken: string
+): Promise<GoogleTaskListWithTasks[]> {
+  const lists = await fetchTaskLists(accessToken);
+  return Promise.all(
+    lists.map(async (list) => ({
+      ...list,
+      tasks: await fetchTasks(accessToken, list.id),
+    }))
+  );
 }
 
 export async function createTask(

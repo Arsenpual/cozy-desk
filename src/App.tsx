@@ -54,7 +54,11 @@ import type {
 } from './types/game';
 import { ASSETS } from './types/game';
 import { soundEngine } from './utils/sound';
-import { createTask, GoogleTasksApiError } from './utils/tasksApi';
+import {
+  createTask,
+  fetchAllTaskListsWithTasks,
+  GoogleTasksApiError,
+} from './utils/tasksApi';
 import {
   clearYouTubeAccessToken,
   initYouTubeAuth,
@@ -948,6 +952,65 @@ export default function App() {
       const now = new Date();
       const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
+      type TasksContextPayload =
+        | { status: 'not_signed_in' | 'auth_expired' | 'unavailable' }
+        | {
+            status: 'connected';
+            lists: Array<{
+              id: string;
+              title: string;
+              tasks: Array<{
+                id: string;
+                title: string;
+                status: 'needsAction' | 'completed';
+                due?: string;
+                notes?: string;
+              }>;
+            }>;
+          };
+
+      let tasksContext: TasksContextPayload = { status: 'not_signed_in' };
+      if (youtubeToken) {
+        let timeoutId: number | undefined;
+        try {
+          const listsWithTasks = await Promise.race([
+            fetchAllTaskListsWithTasks(youtubeToken),
+            new Promise<never>((_, reject) => {
+              timeoutId = window.setTimeout(() => reject(new Error('TASKS_TIMEOUT')), 4000);
+            }),
+          ]);
+          tasksContext = {
+            status: 'connected',
+            lists: listsWithTasks.map((list) => ({
+              id: list.id,
+              title: list.title,
+              tasks: list.tasks.map((t) => ({
+                id: t.id,
+                title: t.title,
+                status: t.status,
+                ...(t.due ? { due: t.due } : {}),
+                ...(t.notes ? { notes: t.notes } : {}),
+              })),
+            })),
+          };
+        } catch (err) {
+          if (err instanceof GoogleTasksApiError && (err.status === 401 || err.status === 403)) {
+            handleYouTubeTokenExpired();
+            tasksContext = { status: 'auth_expired' };
+          } else {
+            tasksContext = { status: 'unavailable' };
+          }
+        } finally {
+          if (timeoutId !== undefined) {
+            window.clearTimeout(timeoutId);
+          }
+        }
+      }
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
       try {
         const res = await fetch('/api/assistant/chat', {
           method: 'POST',
@@ -960,6 +1023,7 @@ export default function App() {
             mode,
             timeOfDay,
             localDate,
+            tasksContext,
           }),
           signal: controller.signal,
         });
@@ -1098,7 +1162,14 @@ export default function App() {
         void fetchCharacterStatuses();
       }
     },
-    [fetchCharacterStatuses, handleUpdateCharacterActivity, showMinaBubble, timeOfDay]
+    [
+      fetchCharacterStatuses,
+      handleUpdateCharacterActivity,
+      handleYouTubeTokenExpired,
+      showMinaBubble,
+      timeOfDay,
+      youtubeToken,
+    ]
   );
 
   const handleConfirmChatTask = useCallback(

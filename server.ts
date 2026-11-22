@@ -26,11 +26,31 @@ interface IncomingMessage {
   content: string;
 }
 
+interface IncomingGoogleTask {
+  id?: string;
+  title?: string;
+  status?: string;
+  due?: string;
+  notes?: string;
+}
+
+interface IncomingGoogleTaskList {
+  id?: string;
+  title?: string;
+  tasks?: IncomingGoogleTask[];
+}
+
+interface IncomingTasksContext {
+  status?: 'connected' | 'not_signed_in' | 'auth_expired' | 'unavailable';
+  lists?: IncomingGoogleTaskList[];
+}
+
 interface ChatRequestBody {
   messages?: IncomingMessage[];
   mode?: WorkMode;
   timeOfDay?: TimeOfDay;
   localDate?: string;
+  tasksContext?: IncomingTasksContext;
 }
 
 interface AntigravityChatRequestBody {
@@ -428,10 +448,120 @@ function createGeminiClient(): GoogleGenAI {
   });
 }
 
+function formatGoogleTasksContext(
+  tasksContext: IncomingTasksContext | undefined,
+  localDate: string
+): string {
+  const status = tasksContext?.status;
+
+  if (!tasksContext || status === 'not_signed_in') {
+    return [
+      'สถานะ Google Tasks ปัจจุบัน: ผู้ใช้ยังไม่ได้เข้าสู่ระบบ Google (Sign in with Google)',
+      '- หากผู้ใช้ถามถึงงานใน Google Tasks หรือขอให้สรุป/รายงานงานที่มีอยู่ ให้แจ้งอย่างสุภาพว่ายังมองไม่เห็นรายการงานเพราะยังไม่ได้เชื่อมต่อบัญชี Google และแนะนำให้กดปุ่ม "Sign in with Google" ก่อน (ห้ามเดาหรือแต่งชื่องานขึ้นมาเอง)',
+    ].join('\n');
+  }
+
+  if (status === 'auth_expired') {
+    return [
+      'สถานะ Google Tasks ปัจจุบัน: เซสชัน Google หมดอายุหรือยังไม่มีสิทธิ์เข้าถึง Google Tasks',
+      '- หากผู้ใช้ถามถึงรายการงาน ให้แจ้งอย่างสุภาพว่าสิทธิ์เชื่อมต่อ Google หมดอายุแล้ว กรุณากด "Sign in with Google" ใหม่อีกครั้งเพื่อให้มีน่าอ่านรายการงานล่าสุดได้',
+    ].join('\n');
+  }
+
+  if (status === 'unavailable') {
+    return [
+      'สถานะ Google Tasks ปัจจุบัน: ไม่สามารถดึงข้อมูลจาก Google Tasks ได้ชั่วคราว',
+      '- หากผู้ใช้ถามถึงรายการงาน ให้แจ้งว่าตอนนี้เชื่อมต่อดึงข้อมูลจาก Google Tasks ไม่สำเร็จชั่วคราว แนะนำให้ลองถามใหม่อีกครั้งหรือเปิดดูที่กระดานโน้ตในห้องทำงาน',
+    ].join('\n');
+  }
+
+  const rawLists = Array.isArray(tasksContext.lists) ? tasksContext.lists.slice(0, 20) : [];
+  let totalPending = 0;
+  let totalCompleted = 0;
+  let renderedTaskCount = 0;
+  const MAX_RENDERED_TASKS = 150;
+
+  const listBlocks: string[] = [];
+
+  for (const list of rawLists) {
+    const listTitle =
+      typeof list?.title === 'string' && list.title.trim()
+        ? list.title.trim().slice(0, 100)
+        : 'รายการงาน';
+    const rawTasks = Array.isArray(list?.tasks) ? list.tasks : [];
+
+    const pendingTasks = rawTasks.filter((t) => t?.status !== 'completed');
+    const completedTasks = rawTasks.filter((t) => t?.status === 'completed');
+
+    totalPending += pendingTasks.length;
+    totalCompleted += completedTasks.length;
+
+    const orderedTasks = [...pendingTasks, ...completedTasks];
+    const lines: string[] = [];
+
+    for (const task of orderedTasks) {
+      if (renderedTaskCount >= MAX_RENDERED_TASKS) break;
+      const title =
+        typeof task?.title === 'string' && task.title.trim()
+          ? task.title.trim().slice(0, 200)
+          : '(ไม่มีชื่องาน)';
+      const isDone = task?.status === 'completed';
+      const dueDate =
+        typeof task?.due === 'string' && /^\d{4}-\d{2}-\d{2}/.test(task.due)
+          ? task.due.slice(0, 10)
+          : '';
+      const notes =
+        typeof task?.notes === 'string' && task.notes.trim()
+          ? task.notes.trim().replace(/\s+/g, ' ').slice(0, 160)
+          : '';
+
+      let dueTag = '';
+      if (dueDate) {
+        if (!isDone && dueDate < localDate) {
+          dueTag = ` | กำหนดส่ง: ${dueDate} (เลยกำหนด)`;
+        } else if (!isDone && dueDate === localDate) {
+          dueTag = ` | กำหนดส่ง: ${dueDate} (วันนี้)`;
+        } else {
+          dueTag = ` | กำหนดส่ง: ${dueDate}`;
+        }
+      }
+      const notesTag = notes ? ` | โน้ต: ${notes}` : '';
+      lines.push(`  - [${isDone ? '✓ เสร็จแล้ว' : 'ยังไม่เสร็จ'}] ${title}${dueTag}${notesTag}`);
+      renderedTaskCount += 1;
+    }
+
+    if (lines.length === 0) {
+      listBlocks.push(`• รายการ "${listTitle}" (ไม่มีงานในรายการนี้)`);
+    } else {
+      listBlocks.push(
+        `• รายการ "${listTitle}" (ค้าง ${pendingTasks.length} / เสร็จแล้ว ${completedTasks.length}):\n${lines.join('\n')}`
+      );
+    }
+  }
+
+  const truncatedNote =
+    totalPending + totalCompleted > renderedTaskCount
+      ? `\n(หมายเหตุ: แสดง ${renderedTaskCount} จากทั้งหมด ${totalPending + totalCompleted} งาน)`
+      : '';
+
+  return [
+    `ข้อมูล Google Tasks จริงล่าสุดทั้งหมดของผู้ใช้ (อัปเดตเรียลไทม์ ณ ${localDate} | งานค้างทั้งหมด ${totalPending} งาน, เสร็จแล้ว ${totalCompleted} งาน):`,
+    listBlocks.length > 0 ? listBlocks.join('\n\n') : '(ยังไม่มีรายการงานใน Google Tasks)',
+    truncatedNote,
+    'แนวทางการรายงาน Google Tasks:',
+    '- เมื่อผู้ใช้ถามถึงงาน (เช่น "มีงานอะไรบ้าง", "เช็ค Google Tasks", "สรุปงานวันนี้", "งานค้างมีอะไร", "รายงาน task ทั้งหมด") ให้รายงานจากข้อมูลจริงด้านบนทั้งหมด (รวมถึงงานที่ผู้ใช้เพิ่มจากมือถือ/เว็บ Google Tasks ไม่ใช่แค่ที่เพิ่มในแชท)',
+    '- แยกหัวข้อหรือจัดรูปแบบให้อ่านง่าย เช่น แยกงานที่ยังไม่เสร็จ / งานเลยกำหนด / งานวันนี้ / งานที่เสร็จแล้ว หรือแยกตามชื่อ Task List หากมีหลายรายการ',
+    '- หากไม่มีงานค้างอยู่เลย ให้แจ้งให้ชัดเจนว่าตอนนี้ไม่มีงานค้างใน Google Tasks',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 function buildSystemInstruction(
   mode: WorkMode,
   timeOfDay: TimeOfDay,
-  localDate: string
+  localDate: string,
+  tasksContext?: IncomingTasksContext
 ): string {
   const timeContext: Record<TimeOfDay, string> = {
     morning: 'ตอนนี้เป็นช่วงเช้าในบ้าน บรรยากาศสดใสเหมาะกับการวางแผนและเริ่มงาน',
@@ -468,11 +598,13 @@ function buildSystemInstruction(
     'ภาษา: ตอบเป็นภาษาไทยอย่างเป็นธรรมชาติเป็นหลัก (หรือตอบตามภาษาที่ผู้ใช้พิมพ์มาหากผู้ใช้สื่อสารเป็นภาษาอังกฤษ)',
     'รูปแบบการตอบ: ใช้ Markdown แบบอ่านง่าย (หัวข้อย่อย ตัวหนา รายการขีด/ตัวเลข) หลีกเลี่ยงการใช้คำฟุ่มเฟือยเกินจำเป็น',
     [
-      'ความสามารถเสริม — เพิ่มงานลง Google Tasks บนกระดานโน้ตในห้องทำงาน:',
+      'ความสามารถเสริม — ดู/รายงาน และเพิ่มงานลง Google Tasks บนกระดานโน้ตในห้องทำงาน:',
+      '- คุณสามารถมองเห็นรายการ Google Tasks จริงทั้งหมดของผู้ใช้จากข้อมูลล่าสุดที่แนบไว้ด้านล่าง และสามารถรายงาน/สรุปให้ผู้ใช้ได้ทันทีเมื่อถูกถาม',
       '- หากผู้ใช้สั่งให้เพิ่มงาน สร้าง task จดสิ่งที่ต้องทำ เตือนความจำ หรือเพิ่มรายการลง Google Tasks (เช่น "ช่วยเพิ่มงาน...", "จด task ...", "เพิ่มลง Google Tasks...") ให้เรียกเครื่องมือ `propose_google_task` พร้อมสกัดชื่องาน รายละเอียดโน้ต และวันครบกำหนดรูปแบบ YYYY-MM-DD (คำนวณจากวันที่ปัจจุบันหากผู้ใช้พูดว่า วันนี้/พรุ่งนี้/มะรืน/วันศุกร์)',
       '- ตอบกลับสั้นๆ ว่าเตรียมรายการงานไว้ให้ตรวจสอบและกดยืนยันด้านล่างแล้ว และเมื่อกดยืนยันคุณจะเดินไปปักหมุดบนกระดานโน้ตให้ทันที',
-      '- หากผู้ใช้เพียงถาม-ตอบ คิดไอเดีย หรือร่างเอกสารทั่วไปโดยไม่ได้สั่งเพิ่มงานลง Google Tasks ห้ามเรียกเครื่องมือ `propose_google_task`',
+      '- หากผู้ใช้เพียงถาม-ตอบ ถามดูรายการงานที่มีอยู่ คิดไอเดีย หรือร่างเอกสารทั่วไปโดยไม่ได้สั่งเพิ่มงานใหม่ลง Google Tasks ห้ามเรียกเครื่องมือ `propose_google_task`',
     ].join('\n'),
+    formatGoogleTasksContext(tasksContext, localDate),
     modeGuidance[mode] ?? modeGuidance.qa,
   ].join('\n\n');
 }
@@ -1123,7 +1255,12 @@ async function startServer() {
     }, 8000);
 
     try {
-      const systemInstruction = buildSystemInstruction(mode, timeOfDay, localDate);
+      const systemInstruction = buildSystemInstruction(
+        mode,
+        timeOfDay,
+        localDate,
+        body.tasksContext
+      );
       let emittedAnyChunk = false;
       let emittedText = false;
       let emittedTaskProposal = false;
